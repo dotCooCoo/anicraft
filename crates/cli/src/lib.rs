@@ -30,9 +30,14 @@ USAGE:
   anicraft-cli formats                   lists every export format, plug-ins included (JSON)
   anicraft-cli commands
   anicraft-cli run <file|--sample> <script.json> [--save <out.anicraft>]
+                                         a JSON array of {cmd, params}, or a saved command
+                                         (one undo step; nothing changes if a step fails)
   anicraft-cli exec <file|--sample> <command.id> [<json-params>] [--save <out.anicraft>]
   anicraft-cli new --out <file.anicraft> [--width W] [--height H] [--fps F]
   anicraft-cli guide --out <folder>      writes the user guide as HTML pages (open index.html)
+  anicraft-cli guide search <words> [--limit N] [--json yes]
+                                         searches the user guide: chapter, heading, page and a
+                                         passage for each result, best first (as its search page)
   anicraft-cli bench [--layers N] [--shapes N] [--frames N]   performance probe (use --release)
   anicraft-cli bench --check yes         the default scenario against the budgets in
                                          docs/performance.md; fails when one is missed
@@ -138,8 +143,26 @@ pub fn run(argv: &[String]) -> Result<String, String> {
             serde_json::to_string_pretty(&list).map_err(|e| e.to_string())
         }
         // The user guide as the static HTML book Help › User Guide opens (ADR 0069).
+        // Searching it, with the ranking the book's search page uses (ADR 0096).
+        "guide" if src == Some("search") => {
+            let words = a.positional.get(1..).unwrap_or_default().join(" ");
+            if anicraft_guide::search::terms(&words).is_empty() {
+                return Err("guide search needs words to look for, e.g. anicraft-cli guide search onion skin".into());
+            }
+            let limit = a.num::<usize>("limit")?.unwrap_or(10).clamp(1, 100);
+            let hits = anicraft_guide::search::search(anicraft_guide::PAGES, &anicraft_guide::search::sections(anicraft_guide::PAGES), &words, limit);
+            if a.flag("json").is_some_and(|v| v == "yes") {
+                let list: Vec<Value> = hits.iter().map(|h| json!({"chapter": h.chapter, "heading": h.heading, "url": h.url, "snippet": h.snippet, "score": h.score})).collect();
+                return serde_json::to_string_pretty(&list).map_err(|e| e.to_string());
+            }
+            if hits.is_empty() {
+                return Ok(format!("nothing in the user guide matches “{}”", words.trim()));
+            }
+            let lines: Vec<String> = hits.iter().enumerate().map(|(i, h)| format!("{}. {} · {}\n   {}\n   {}", i + 1, h.heading, h.chapter, h.url, h.snippet)).collect();
+            Ok(lines.join("\n\n"))
+        }
         "guide" => {
-            let out = a.flag("out").ok_or("guide needs --out <folder>")?;
+            let out = a.flag("out").ok_or("guide needs --out <folder>, or search <words>")?;
             let n = anicraft_guide::write_site(std::path::Path::new(out)).map_err(|e| format!("{out}: {e}"))?;
             Ok(format!("wrote {n} files of the user guide to {out}; open {out}/index.html"))
         }
@@ -239,7 +262,16 @@ pub fn run(argv: &[String]) -> Result<String, String> {
             let script = a.positional.get(1).ok_or("run needs a script.json")?;
             let text = std::fs::read_to_string(script).map_err(|e| format!("{script}: {e}"))?;
             // Windows editors often save UTF-8 with a byte-order mark; JSON parsers reject it.
-            let steps: Vec<Value> = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("{script}: expected a JSON array of {{cmd, params}}: {e}"))?;
+            let parsed: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|e| format!("{script}: expected a JSON array of {{cmd, params}} or a saved command: {e}"))?;
+            // A saved command (ADR 0097) runs as one transactional step, as in the app.
+            if parsed.is_object() {
+                let v = exec(&mut s, "macro.run", &json!({"path": script}))?;
+                if let Some(out) = a.flag("save") {
+                    exec(&mut s, "file.save", &json!({"path": out}))?;
+                }
+                return serde_json::to_string_pretty(&v).map_err(|e| e.to_string());
+            }
+            let steps: Vec<Value> = serde_json::from_value(parsed).map_err(|e| format!("{script}: expected a JSON array of {{cmd, params}}: {e}"))?;
             let mut results = Vec::new();
             for (i, step) in steps.iter().enumerate() {
                 let id = step.get("cmd").and_then(Value::as_str).ok_or_else(|| format!("step {}: missing \"cmd\"", i + 1))?;
@@ -700,11 +732,43 @@ mod tests {
     }
 
     #[test]
+    fn run_takes_a_saved_command_file() {
+        let dir = std::env::temp_dir().join(format!("anicraft-cli-macro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("Spin.json");
+        std::fs::write(&file, r#"{"format": "anicraft-command", "version": 1, "steps": [{"cmd": "edit.select_all"}, {"cmd": "modify.rotate_cw"}]}"#).unwrap();
+        let out = run(&["run".into(), "--sample".into(), file.display().to_string()]).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!((v["name"].as_str(), v["steps"].as_u64()), (Some("Spin"), Some(2)), "{out}");
+        // A failing step names itself and leaves nothing behind.
+        std::fs::write(&file, r#"{"steps": [{"cmd": "edit.select_all"}, {"cmd": "modify.rotate_cw"}, {"cmd": "layer.set_height", "params": {"height": 7}}]}"#).unwrap();
+        let e = run(&["run".into(), "--sample".into(), file.display().to_string()]).unwrap_err();
+        assert!(e.contains("stopped at step 3 of 3"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn usage_and_errors() {
         assert!(run(&[]).unwrap().contains("USAGE"));
         assert!(run(&["bogus".into()]).is_err());
         assert!(run(&["info".into()]).is_err());
         assert!(run(&["commands".into()]).unwrap().contains("timeline.insert_keyframe"));
         assert!(run(&["guide".into()]).is_err());
+    }
+
+    #[test]
+    fn guide_search_prints_chapter_heading_page_and_passage() {
+        let s = |v: &[&str]| run(&v.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        let out = s(&["guide", "search", "onion", "skin"]).unwrap();
+        let first = out.lines().next().unwrap_or("");
+        assert_eq!(first, "1. Onion skin · The timeline", "{out}");
+        assert!(out.contains("timeline.html#onion-skin"), "{out}");
+        let json: Value = serde_json::from_str(&s(&["guide", "search", "export", "gif", "--json", "yes", "--limit", "3"]).unwrap()).unwrap();
+        let list = json.as_array().unwrap();
+        assert!(list.len() <= 3 && list[0]["url"] == "getting-started.html#export-a-gif-or-a-video", "{json}");
+        assert!(s(&["guide", "search", "zzzzqqq"]).unwrap().starts_with("nothing in the user guide matches"));
+        assert!(s(&["guide", "search"]).is_err() && s(&["guide", "search", "?!"]).is_err());
+        assert!(s(&["guide", "search", "pen", "--limit", "x"]).is_err());
     }
 }

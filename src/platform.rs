@@ -397,7 +397,7 @@ pub fn places() -> Vec<(&'static str, Option<PathBuf>)> {
         return Vec::new();
     }
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-    let mut v = vec![(tr_noop!("Preferences"), config_dir()), (tr_noop!("Autosave"), recovery_dir()), (tr_noop!("Logs"), log_dir()), (tr_noop!("Plug-ins"), plugins_dir()), (tr_noop!("Templates"), templates_dir())];
+    let mut v = vec![(tr_noop!("Preferences"), config_dir()), (tr_noop!("Autosave"), recovery_dir()), (tr_noop!("Logs"), log_dir()), (tr_noop!("Plug-ins"), plugins_dir()), (tr_noop!("Templates"), templates_dir()), (tr_noop!("Saved commands"), commands_dir())];
     #[cfg(not(target_arch = "wasm32"))]
     v.push((tr_noop!("User guide"), Some(guide_dir())));
     v
@@ -448,6 +448,28 @@ pub fn open_user_guide() -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     {
         crate::web::open_page("guide/index.html")
+    }
+}
+
+/// Context help and search (ADR 0096): the bundled book at `page` (a page of the book with its
+/// anchor, `timeline.html#onion-skin`). A `file://` page opened by the system loses its anchor
+/// on some systems, so the desktop writes a page beside the book that sends the browser on.
+pub fn open_user_guide_at(page: &str) -> Result<(), String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        // Tests press F1 and click every control: they never write to the cache or open a browser.
+        if cfg!(test) {
+            return Ok(());
+        }
+        let dir = guide_dir();
+        anicraft_guide::write_site(&dir).map_err(|e| tr!("could not write the user guide to {path}: {e}", path = dir.display(), e = e))?;
+        let help = dir.join(anicraft_guide::HELP_PAGE);
+        std::fs::write(&help, anicraft_guide::redirect_page(page)).map_err(|e| tr!("could not write the user guide to {path}: {e}", path = dir.display(), e = e))?;
+        crate::app::open_in_system(&help)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        crate::web::open_page(&format!("guide/{page}"))
     }
 }
 
@@ -529,6 +551,19 @@ pub fn templates_dir() -> Option<PathBuf> {
     match std::env::var_os("ANICRAFT_TEMPLATES_DIR").filter(|v| !v.is_empty()) {
         Some(d) => Some(PathBuf::from(d)),
         None => config_dir().map(|d| d.join("Templates")), // i18n-exempt: a folder name
+    }
+}
+
+/// Where saved commands live (ADR 0097): `Commands` in the settings folder, one small JSON file
+/// each. `ANICRAFT_COMMANDS_DIR` points it elsewhere (tests, screenshots). None in a browser,
+/// which has no folders to keep them in.
+pub fn commands_dir() -> Option<PathBuf> {
+    if WEB {
+        return None;
+    }
+    match std::env::var_os("ANICRAFT_COMMANDS_DIR").filter(|v| !v.is_empty()) {
+        Some(d) => Some(PathBuf::from(d)),
+        None => config_dir().map(|d| d.join("Commands")), // i18n-exempt: a folder name
     }
 }
 
@@ -829,6 +864,7 @@ pub fn filters(cmd: &str) -> (&'static str, &'static [&'static str]) {
         // Opening also imports .fla archives and .xfl packages.
         "file.open" => (tr_noop!("Documents"), &["anicraft", "fla", "xfl"]),
         "plugin.install" => (tr_noop!("WebAssembly plug-in"), &["wasm"]),
+        "macro.run" | "macro.import" => (tr_noop!("Saved command"), &["json"]),
         "brush.preset_export" | "brush.preset_import" => (tr_noop!("Brush set"), &["json"]),
         "filter.preset_export" | "filter.preset_import" => (tr_noop!("Filter preset file"), &["json"]),
         "swatch.export" => (tr_noop!("Swatch file"), &["json"]),
@@ -839,7 +875,7 @@ pub fn filters(cmd: &str) -> (&'static str, &'static [&'static str]) {
 
 /// Commands that read a file the user picks (the others write one, or a folder of them).
 pub fn reads_file(cmd: &str) -> bool {
-    matches!(cmd, "file.open" | "plugin.install" | "file.import" | "file.import_to_library" | "brush.preset_import" | "filter.preset_import" | "swatch.import")
+    matches!(cmd, "file.open" | "plugin.install" | "file.import" | "file.import_to_library" | "brush.preset_import" | "filter.preset_import" | "swatch.import" | "macro.run" | "macro.import")
 }
 
 /// Shows the platform's own dialog (Windows common dialog, macOS panel, Linux XDG portal), with

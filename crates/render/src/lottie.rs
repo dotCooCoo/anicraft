@@ -132,11 +132,13 @@ impl Bez {
 
     /// The path of [`Bez::flat`] values, as Lottie writes it.
     fn flat_value(closed: bool, f: &[f64]) -> Value {
-        let pts: Vec<Value> = f.chunks(2).map(|c| json!([num(c.first().copied().unwrap_or(0.0)), num(c.get(1).copied().unwrap_or(0.0))])).collect();
+        let pts: Vec<[f64; 2]> = f.chunks(2).map(|c| [c.first().copied().unwrap_or(0.0), c.get(1).copied().unwrap_or(0.0)]).collect();
         let k = pts.len() / 3;
         let (v, rest) = pts.split_at(k.min(pts.len()));
         let (i, o) = rest.split_at(k.min(rest.len()));
-        json!({"c": closed, "v": v, "i": i, "o": o})
+        // Geometry/easing stay application-owned; the shared path schema uses our
+        // existing compact numeric policy without a second rounding pass.
+        craft_lottie::Bezier { closed, vertices: v.to_vec(), in_tangents: i.to_vec(), out_tangents: o.to_vec() }.to_json_with(num)
     }
 }
 
@@ -658,8 +660,13 @@ pub fn to_lottie_keyed(doc: &Document, name: &str, from: u32, to: u32, backgroun
     let mattes = layers.len() - shape_layers;
     if background {
         let bg = doc.stage.background.sanitized();
-        layers.push(json!({"ddd": 0, "ind": shape_layers + mattes + 1, "ty": 1, "nm": "Stage", "sr": 1, "ks": static_ks(), "ao": 0, "ip": 0, "op": frames, "st": 0, "bm": 0,
-            "sc": bg.to_hex(), "sw": doc.stage.width, "sh": doc.stage.height}));
+        // A fully transparent stage has no background layer; otherwise alpha is the layer opacity.
+        if bg.a > 0.0 {
+            let mut ks = static_ks();
+            ks["o"]["k"] = n(bg.a.clamp(0.0, 1.0) * 100.0);
+            layers.push(json!({"ddd": 0, "ind": shape_layers + mattes + 1, "ty": 1, "nm": "Stage", "sr": 1, "ks": ks, "ao": 0, "ip": 0, "op": frames, "st": 0, "bm": 0,
+                "sc": bg.to_hex(), "sw": doc.stage.width, "sh": doc.stage.height}));
+        }
     }
     let root = json!({
         "v": "5.7.0",
@@ -1089,6 +1096,44 @@ mod tests {
         let v = parse(&to_lottie(&soft_mask_doc(MaskMode::Coverage), "hard", 0, 0, false));
         assert_eq!(v["layers"].as_array().unwrap().len(), 1);
         assert_eq!(v["layers"][0]["hasMask"], true);
+    }
+
+    #[test]
+    fn transparent_stage_background_has_no_solid_layer() {
+        let mut d = sample::demo();
+        d.stage.background = anicraft_doc::Rgba::new(1.0, 0.0, 0.0, 0.0);
+        let v = parse(&to_lottie(&d, "x", 0, 1, true));
+        assert!(v["layers"].as_array().unwrap().iter().all(|l| l["ty"] != 1));
+    }
+
+    #[test]
+    fn semi_transparent_stage_background_sets_layer_opacity() {
+        let mut d = sample::demo();
+        d.stage.background = anicraft_doc::Rgba::new(1.0, 0.0, 0.0, 0.5);
+        let v = parse(&to_lottie(&d, "x", 0, 1, true));
+        let l = v["layers"].as_array().unwrap().iter().find(|l| l["ty"] == 1).unwrap();
+        assert_eq!(l["ks"]["o"]["k"].as_f64(), Some(50.0));
+        assert_eq!(l["sc"], "#ff0000");
+    }
+
+    #[test]
+    fn shared_path_wire_keeps_legacy_values_and_precision() {
+        for closed in [false, true] {
+            for flat in [
+                vec![],
+                vec![1.23456],
+                vec![0.0, -0.0, f64::NAN, f64::INFINITY, 1.23456, -2.34567],
+                vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+                vec![1e303, -1e303, f64::MAX, -f64::MAX, 0.0, 0.0],
+            ] {
+                let pts: Vec<Value> =
+                    flat.chunks(2).map(|c| json!([num(c.first().copied().unwrap_or(0.0)), num(c.get(1).copied().unwrap_or(0.0))])).collect();
+                let k = pts.len() / 3;
+                let (v, rest) = pts.split_at(k);
+                let (i, o) = rest.split_at(k);
+                assert_eq!(Bez::flat_value(closed, &flat), json!({"c": closed, "v": v, "i": i, "o": o}));
+            }
+        }
     }
 
     #[test]

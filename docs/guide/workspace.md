@@ -144,7 +144,7 @@ and **Enter** to run it. Installed plug-ins show up here too.
 
 It's the fastest way to reach anything when you don't remember which menu it lives in.
 
-For a list of every shortcut, choose **Help › Keyboard Shortcuts** (**F1**). That sheet also
+For a list of every shortcut, choose **Help › Keyboard Shortcuts** (**Ctrl+Alt+Shift+K**). That sheet also
 lets you change them (see [Preferences, shortcuts and accessibility](preferences-shortcuts-accessibility.md)).
 
 ## Moving around the stage
@@ -300,6 +300,10 @@ changes your document, including Properties edits, timeline changes and Library 
 drag is always a single step. The **History** panel at the bottom of the dock lists the steps
 by name. Click any step to jump back to it, and click a later (dimmed) one to go forward
 again.
+
+To keep steps you repeat, **Ctrl+click** them in the History panel and choose **Save As
+Command…**: they come back at the end of the Commands menu, to run on any selection as one step.
+See [Saved commands](saved-commands.md).
 
 Undo history is kept in memory while the document is open. It isn't saved with the file.
 
