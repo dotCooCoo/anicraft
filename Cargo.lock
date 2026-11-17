@@ -417,6 +417,7 @@ dependencies = [
  "anicraft-text",
  "anicraft-xml",
  "craft-image-codecs",
+ "craft-video",
  "craft-xfl",
  "miniz_oxide 0.8.9",
  "thiserror 2.0.21",
@@ -1221,7 +1222,7 @@ name = "craft-audio"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc#453b0da782ccef39be9a6dac8d27c80b553ef1cc"
 dependencies = [
- "craft-media",
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc)",
  "craft-xml",
  "log",
  "symphonia",
@@ -1308,6 +1309,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-media"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac#fd91be74f078d7062945ff6512cf65afea0c73ac"
+
+[[package]]
 name = "craft-metadata"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=453b0da782ccef39be9a6dac8d27c80b553ef1cc#453b0da782ccef39be9a6dac8d27c80b553ef1cc"
@@ -1366,6 +1372,16 @@ dependencies = [
  "winreg",
  "winsafe",
  "zip",
+]
+
+[[package]]
+name = "craft-video"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac#fd91be74f078d7062945ff6512cf65afea0c73ac"
+dependencies = [
+ "craft-media 0.1.0 (git+https://github.com/storytold/craft-libs?rev=fd91be74f078d7062945ff6512cf65afea0c73ac)",
+ "miniz_oxide 0.8.9",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
