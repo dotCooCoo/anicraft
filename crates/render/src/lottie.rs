@@ -360,6 +360,16 @@ struct Track {
     first_index: usize,
 }
 
+/// Keep color sanitation and stop policy local; share only the flat Lottie wire order.
+fn gradient_values(stops: &[(f32, Rgba)]) -> Vec<f64> {
+    let colors = stops.iter().map(|(o, c)| {
+        let c = c.sanitized();
+        (f64::from(o.clamp(0.0, 1.0)), [f64::from(c.r), f64::from(c.g), f64::from(c.b)])
+    });
+    let opacities = stops.iter().map(|(o, c)| (f64::from(o.clamp(0.0, 1.0)), f64::from(c.sanitized().a)));
+    craft_lottie::flat_gradient_values(colors, opacities).collect()
+}
+
 fn rgb(c: Rgba) -> Vec<f64> {
     let c = c.sanitized();
     vec![f64::from(c.r), f64::from(c.g), f64::from(c.b), 1.0]
@@ -967,16 +977,7 @@ fn layer(tr: &Track, ind: usize, w: &mut Writer<'_>) -> Value {
                     };
                     start.push(vec![f64::from(a.x), f64::from(a.y)]);
                     end.push(vec![f64::from(b.x), f64::from(b.y)]);
-                    // Colour stops, then opacity stops: [offset, r, g, b, …, offset, a, …].
-                    let mut k: Vec<f64> = Vec::with_capacity(count * 6);
-                    for (o, c) in stops {
-                        let c = c.sanitized();
-                        k.extend([f64::from(o.clamp(0.0, 1.0)), f64::from(c.r), f64::from(c.g), f64::from(c.b)]);
-                    }
-                    for (o, c) in stops {
-                        k.extend([f64::from(o.clamp(0.0, 1.0)), f64::from(c.sanitized().a)]);
-                    }
-                    colors.push(k);
+                    colors.push(gradient_values(stops));
                 }
             }
             let (s, e, g) = (w.prop(first, &start, TOL_PX, Enc::Vector), w.prop(first, &end, TOL_PX, Enc::Vector), w.prop(first, &colors, TOL_COLOR, Enc::Vector));
@@ -1073,6 +1074,39 @@ mod tests {
             d.timeline_mut(0).layers.push(Arc::new(l));
         }
         d
+    }
+
+    #[test]
+    fn shared_gradient_values_match_legacy_before_keyframe_fitting() {
+        fn legacy(stops: &[(f32, Rgba)]) -> Vec<f64> {
+            let mut k = Vec::with_capacity(stops.len() * 6);
+            for (o, c) in stops {
+                let c = c.sanitized();
+                k.extend([f64::from(o.clamp(0.0, 1.0)), f64::from(c.r), f64::from(c.g), f64::from(c.b)]);
+            }
+            for (o, c) in stops {
+                k.extend([f64::from(o.clamp(0.0, 1.0)), f64::from(c.sanitized().a)]);
+            }
+            k
+        }
+        let cases = [
+            vec![],
+            vec![(0.12345679, Rgba::WHITE), (1.0, Rgba::BLACK)],
+            vec![(0.5, Rgba::new(0.2, 0.4, 0.6, 0.25)), (0.5, Rgba::WHITE)],
+            vec![
+                (-1.0, Rgba { r: f32::NAN, g: f32::INFINITY, b: -1.0, a: 2.0 }),
+                (f32::NAN, Rgba::BLACK),
+                (f32::INFINITY, Rgba::WHITE),
+                (-0.0, Rgba::WHITE),
+            ],
+        ];
+        for stops in cases {
+            let actual = gradient_values(&stops);
+            let expected = legacy(&stops);
+            assert_eq!(actual.iter().map(|x| x.to_bits()).collect::<Vec<_>>(), expected.iter().map(|x| x.to_bits()).collect::<Vec<_>>());
+            assert_eq!(actual.iter().map(|x| num(*x)).collect::<Vec<_>>(), expected.iter().map(|x| num(*x)).collect::<Vec<_>>());
+            assert_eq!(actual.len(), stops.len() * 6, "opaque alpha stops must survive animated fitting");
+        }
     }
 
     #[test]
