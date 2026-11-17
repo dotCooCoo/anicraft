@@ -15,9 +15,9 @@ repository = "https://github.com/storytold/AniCraft"
 rust-version = "1.95"
 
 [workspace.dependencies]
-craft-video = { git = "https://github.com/storytold/craft-libs", rev = "fd91be74f078d7062945ff6512cf65afea0c73ac", default-features = false, features = ["screen-video"] }
-craft-palette = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-lottie = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
+craft-video = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b", default-features = false, features = ["screen-video"] }
+craft-palette = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-lottie = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
 anicraft-geom = { path = "crates/geom" }
 anicraft-doc = { path = "crates/doc" }
 anicraft-render = { path = "crates/render" }
@@ -30,15 +30,15 @@ anicraft-plugins = { path = "crates/plugins" }
 anicraft-audio = { path = "crates/audio" }
 anicraft-gpu = { path = "crates/gpu" }
 anicraft-guide = { path = "crates/guide" }
-craft-anicraft-format = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-mime = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-html = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc", default-features = false }
-craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc", default-features = false, features = ["decode", "pcm-encode"] }
-craft-gif = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-webp = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-xfl = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
-craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
+craft-anicraft-format = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-mime = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-html = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b", default-features = false }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b", default-features = false, features = ["decode", "pcm-encode"] }
+craft-gif = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-image-codecs = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-webp = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-xfl = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
+craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
 # The GPU stage (ADR 0019) uses the wgpu that eframe's egui-wgpu brings, with the same
 # (default) features, so the tree keeps one wgpu build.
 wgpu = "30"
@@ -118,7 +118,7 @@ sys-locale = "0.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The user guide, bundled for Help › User Guide (ADR 0069). The web build serves it as pages instead.
 anicraft-guide.workspace = true
-craft-update = { git = "https://github.com/storytold/craft-libs", rev = "453b0da782ccef39be9a6dac8d27c80b553ef1cc" }
+craft-update = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
 
 eframe = { workspace = true, features = ["links"] }
 rfd.workspace = true
