@@ -8,6 +8,7 @@ pub use anicraft_audio as audio;
 pub use anicraft_actions as actions;
 
 pub mod aids;
+pub mod parenting;
 pub mod armature;
 pub mod spring;
 pub mod skin;
@@ -47,6 +48,7 @@ pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, W
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
 pub use camera::{Camera, DepthKey};
 pub use swatch::{MAX_SWATCHES, Swatch, SwatchPaint};
+pub use parenting::{MAX_RIG_DEPTH, RigError};
 pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
 pub use nine_slice::symbol_box;
 pub use rich_text::{BaselineShift, CharStyle, MAX_TEXT_RUNS, MAX_URL, ParagraphStyle, StyleSummary, TextFill, TextRun, safe_url};
@@ -575,6 +577,12 @@ pub enum ElementKind {
         /// ADR 0024), one handler per event.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         events: Vec<EventHandler>,
+        /// The transformation point (ADR 0111), in the instance's own space: what Free
+        /// Transform, the Properties fields and tweens turn, scale and skew it about. `None`
+        /// until the artist moves it: tools then use the centre of its box, and tweens its
+        /// registration point (as files from before it did). Read through [`Element::pivot`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pivot: Option<Vec2>,
     },
     /// A block of text (ADR 0012).
     Text(Arc<TextBlock>),
@@ -1039,6 +1047,34 @@ pub struct Element {
 }
 
 impl Element {
+    /// The transformation point the artist set (ADR 0111), in the element's own space: only a
+    /// symbol instance keeps one. `None` when it was never moved, or isn't finite.
+    pub fn pivot(&self) -> Option<Vec2> {
+        match &self.kind {
+            ElementKind::Symbol { pivot, .. } => pivot.filter(|p| p.is_finite() && p.x.abs() <= MAX_PIVOT && p.y.abs() <= MAX_PIVOT),
+            _ => None,
+        }
+    }
+    /// Sets or clears the transformation point (own space). Answers whether the element keeps
+    /// one (a symbol instance does).
+    pub fn set_pivot(&mut self, at: Option<Vec2>) -> bool {
+        match &mut self.kind {
+            ElementKind::Symbol { pivot, .. } => {
+                *pivot = at.filter(|p| p.is_finite() && p.x.abs() <= MAX_PIVOT && p.y.abs() <= MAX_PIVOT);
+                true
+            }
+            _ => false,
+        }
+    }
+    /// `transform` moved so that the transformation point (when one is set) stays where
+    /// `self.transform` has it in the parent's space: how a new scale, rotation or skew is
+    /// applied about the point. Without a point, `transform` as given.
+    pub fn about_pivot(&self, transform: Affine) -> Affine {
+        let Some(p) = self.pivot() else { return transform };
+        let d = self.transform.apply(p) - transform.apply(p);
+        let m = Affine::translate(d.x, d.y).mul(&transform);
+        if m.is_finite() { m } else { transform }
+    }
     /// Local-space bounds (control-point bounds for shapes, `None` for symbols).
     pub fn local_bounds(&self, doc: &Document) -> Rect {
         element_bounds(doc, self, &Affine::IDENTITY, 0)
@@ -1154,6 +1190,10 @@ pub struct Tween {
     /// properties.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub groups: Vec<(EaseGroup, Easing)>,
+    /// Keep area (ADR 0115): the two scale axes move geometrically instead of in straight
+    /// lines, so squash and stretch between keys of one area keeps that area on every frame.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub keep_area: bool,
 }
 
 impl Tween {
@@ -1329,6 +1369,17 @@ pub struct Layer {
     /// masks), or its opacity or brightness (soft masks). Ignored on other kinds of layer.
     #[serde(default, skip_serializing_if = "MaskMode::is_coverage")]
     pub mask_mode: MaskMode,
+    /// The layer's opacity, `0..=1` (ADR 0111): its artwork is drawn together, then shown this
+    /// strongly, in the movie and every export. A folder's fades the layers in it. Read
+    /// through [`Layer::shown_opacity`].
+    #[serde(default = "full", skip_serializing_if = "is_full")]
+    pub opacity: f32,
+    /// The parent layer (ADR 0113, layer parenting): this layer's artwork is placed in the
+    /// space of the first object on that layer at every frame, so it follows it. Not the
+    /// folder or mask the layer sits in (that is [`Layer::parent`]). Kept sound by
+    /// [`Timeline::repair_rig`]; read through [`Timeline::rig_spaces`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rig_parent: Option<LayerId>,
 }
 
 /// How a mask layer's artwork reveals the layers it masks (ADR 0070).
@@ -1397,6 +1448,10 @@ fn is_one(v: &u8) -> bool {
     *v == 1
 }
 
+/// Farthest a transformation point may be from its instance's registration point, in the
+/// instance's own units (ADR 0111).
+pub const MAX_PIVOT: f32 = 1.0e6;
+
 /// Tallest a layer's timeline row gets, in normal rows (300 %).
 pub const MAX_LAYER_HEIGHT: u8 = 3;
 
@@ -1418,6 +1473,8 @@ impl PartialEq for Layer {
             && self.volume.to_bits() == o.volume.to_bits()
             && self.muted == o.muted
             && self.mask_mode == o.mask_mode
+            && self.opacity.to_bits() == o.opacity.to_bits()
+            && self.rig_parent == o.rig_parent
             && match (&self.armature, &o.armature) {
                 (Some(a), Some(b)) => arc_eq(a, b),
                 (a, b) => a.is_none() && b.is_none(),
@@ -1454,7 +1511,13 @@ impl Layer {
             muted: false,
             armature: None,
             mask_mode: MaskMode::Coverage,
+            opacity: 1.0,
+            rig_parent: None,
         }
+    }
+    /// The layer's own opacity, `0..=1` whatever a file says (not a number: opaque).
+    pub fn shown_opacity(&self) -> f32 {
+        if self.opacity.is_finite() { self.opacity.clamp(0.0, 1.0) } else { 1.0 }
     }
     /// The row height in normal rows, `1..=MAX_LAYER_HEIGHT` whatever a file says.
     pub fn height(&self) -> u8 {
@@ -1629,6 +1692,13 @@ impl Timeline {
         self.folders_of(index).any(|f| !f.visible)
     }
 
+    /// How strongly the layer at `index` shows (ADR 0111): its own opacity times that of every
+    /// folder it is in.
+    pub fn layer_opacity(&self, index: usize) -> f32 {
+        let own = self.layers.get(index).map_or(1.0, |l| l.shown_opacity());
+        self.folders_of(index).fold(own, |a, f| a * f.shown_opacity())
+    }
+
     /// Whether a folder containing layer `id` is locked (so the layer is too).
     pub fn locked_by_folder(&self, id: LayerId) -> bool {
         self.index_of(id).is_some_and(|i| self.folders_of(i).any(|f| f.locked))
@@ -1660,6 +1730,8 @@ impl Timeline {
     pub fn repair_masks(&mut self) {
         // The camera layer sits on top, outside any folder (ADR 0027).
         self.repair_camera();
+        // Parent-layer links that can't hold are dropped (ADR 0113).
+        self.repair_rig();
         for i in 0..self.layers.len() {
             let Some(l) = self.layers.get(i) else { continue };
             let Some(p) = l.parent else { continue };
@@ -2319,6 +2391,10 @@ mod gradient_tests;
 #[cfg(test)]
 #[path = "camera_tests.rs"]
 mod camera_tests;
+
+#[cfg(test)]
+#[path = "parenting_tests.rs"]
+mod parenting_tests;
 
 #[cfg(test)]
 mod tests {

@@ -142,6 +142,31 @@ fn dashed_raw_strokes_keep_their_style_when_cut() {
     assert_eq!(back, s.doc);
 }
 
+/// #389: changing the stroke of a whole raw drawing changes its stroke pieces. Its fills take no
+/// stroke of their own, which would draw the outline twice; a fill selected alone still takes one.
+#[test]
+fn stroke_changes_on_a_raw_drawing_leave_its_fills_bare() {
+    let mut s = blank();
+    run(&mut s, "draw.rect", json!({"x": 100, "y": 100, "w": 200, "h": 100, "fill": "#3366ff", "stroke": "#000000", "stroke_width": 4}));
+    run(&mut s, "draw.line", json!({"x0": 80, "y0": 150, "x1": 320, "y1": 150, "stroke": "#000000", "stroke_width": 4}));
+    let (fills, strokes) = count(&s);
+    assert_eq!(fills, 2, "the line cuts the fill in two");
+    let bare_fills = |s: &Session| shapes(s).iter().filter(|x| x.fill.is_some() && x.stroke.is_none()).count();
+    run(&mut s, "edit.select_all", json!({}));
+    for p in [json!({"width": 32}), json!({"color": "#ff0000"}), json!({"style": "dashed"})] {
+        run(&mut s, "element.set_stroke", p.clone());
+        assert_eq!(count(&s), (fills, strokes), "{p}: no new strokes");
+        assert_eq!(bare_fills(&s), 2, "{p}: the fills stay bare");
+    }
+    assert!(shapes(&s).iter().filter_map(|x| x.stroke.as_ref()).all(|st| st.width == 32.0 && st.color == Rgba::hex(0xff0000)));
+    // Selected alone, a raw fill takes the stroke it is given.
+    run(&mut s, "edit.deselect", json!({}));
+    let fill = s.visible_elements().iter().find(|e| matches!(&e.kind, ElementKind::Shape(sh) if sh.fill.is_some())).map(|e| e.id.0).unwrap();
+    run(&mut s, "element.select", json!({"ids": [fill]}));
+    run(&mut s, "element.set_stroke", json!({"width": 6}));
+    assert_eq!(bare_fills(&s), 1);
+}
+
 /// A raw regular `n`-gon of radius 80 at the origin with `fill` and `stroke` (`null` for none).
 fn polygon(s: &mut Session, n: u32, fill: &serde_json::Value, stroke: &serde_json::Value) {
     let outer = 80.0f32;

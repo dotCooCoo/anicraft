@@ -66,6 +66,7 @@ pub enum Dialog {
     FindReplace,
     BrushLibrary,
     ConvertSymbol,
+    ShapeEdges,
     LayerProperties,
     EditGrid,
     EditGuides,
@@ -76,6 +77,8 @@ pub enum Dialog {
     TestMovie,
     EaseEditor,
     SoundEnvelope,
+    AudioKeys,
+    LipSync,
     Recover,
     Updates,
     ManageWorkspaces,
@@ -86,7 +89,7 @@ pub enum Dialog {
 }
 
 impl Dialog {
-    pub const ALL: [Dialog; 27] = [
+    pub const ALL: [Dialog; 30] = [
         Dialog::Preferences,
         Dialog::Shortcuts,
         Dialog::Licenses,
@@ -97,6 +100,7 @@ impl Dialog {
         Dialog::FindReplace,
         Dialog::BrushLibrary,
         Dialog::ConvertSymbol,
+        Dialog::ShapeEdges,
         Dialog::LayerProperties,
         Dialog::EditGrid,
         Dialog::EditGuides,
@@ -107,6 +111,8 @@ impl Dialog {
         Dialog::TestMovie,
         Dialog::EaseEditor,
         Dialog::SoundEnvelope,
+        Dialog::AudioKeys,
+        Dialog::LipSync,
         Dialog::Recover,
         Dialog::Updates,
         Dialog::ManageWorkspaces,
@@ -129,6 +135,7 @@ impl Dialog {
             Dialog::FindReplace => "find_replace",
             Dialog::BrushLibrary => "brush_library",
             Dialog::ConvertSymbol => "convert_symbol",
+            Dialog::ShapeEdges => "shape_edges",
             Dialog::LayerProperties => "layer_props",
             Dialog::EditGrid => "edit_grid",
             Dialog::EditGuides => "edit_guides",
@@ -142,7 +149,7 @@ impl Dialog {
             Dialog::ManageWorkspaces => "manage_workspaces",
             Dialog::SaveAsCommand => "save_as_command",
             Dialog::ManageSavedCommands => "manage_saved_commands",
-            Dialog::Updates | Dialog::PluginSettings | Dialog::Palette | Dialog::CloseUnsaved => return None,
+            Dialog::Updates | Dialog::PluginSettings | Dialog::AudioKeys | Dialog::LipSync | Dialog::Palette | Dialog::CloseUnsaved => return None,
         })
     }
 
@@ -159,6 +166,7 @@ impl Dialog {
             Dialog::FindReplace => "workspace.md#find-and-replace",
             Dialog::BrushLibrary => "drawing.md#the-brush",
             Dialog::ConvertSymbol => "symbols-and-library.md#making-a-symbol",
+            Dialog::ShapeEdges => "drawing.md#lines-to-fills-expanding-and-softening-fills",
             Dialog::LayerProperties => "timeline.md#layer-properties",
             Dialog::EditGrid | Dialog::EditGuides => "drawing.md#rulers-grid-and-guides",
             Dialog::Plugins => "plugins.md#managing-plug-ins",
@@ -168,6 +176,8 @@ impl Dialog {
             Dialog::TestMovie => "interactivity.md#test-movie",
             Dialog::EaseEditor => "tweens.md#custom-eases",
             Dialog::SoundEnvelope => "images-and-sound.md#effects-and-the-envelope",
+            Dialog::AudioKeys => "images-and-sound.md#convert-audio-to-keyframes",
+            Dialog::LipSync => "images-and-sound.md#auto-lip-sync",
             Dialog::Recover => "getting-started.md#autosave-and-crash-recovery",
             Dialog::Updates => "getting-started.md#install-anicraft",
             Dialog::ManageWorkspaces => "workspace.md#workspaces",
@@ -213,6 +223,9 @@ pub const COMMAND_TOPICS: &[(&str, &str)] = &[
     ("macro.", "saved-commands.md#saving-steps-as-a-command"),
     ("modify.", "drawing.md#transforming-artwork"),
     ("modify.convert_to_symbol", "symbols-and-library.md#making-a-symbol"),
+    ("modify.expand_fill", "drawing.md#lines-to-fills-expanding-and-softening-fills"),
+    ("modify.lines_to_fills", "drawing.md#lines-to-fills-expanding-and-softening-fills"),
+    ("modify.soften_fill_edges", "drawing.md#lines-to-fills-expanding-and-softening-fills"),
     ("motion.", "tweens.md#motion-tweens"),
     ("paint.", "drawing.md#paint-bucket-ink-bottle-and-eyedropper"),
     ("path.", "drawing.md#editing-points-with-subselection"),
@@ -223,6 +236,9 @@ pub const COMMAND_TOPICS: &[(&str, &str)] = &[
     ("scene.", "timeline.md#scenes"),
     ("script.", "interactivity.md#frame-scripts-in-actionscript-30"),
     ("sound.", "images-and-sound.md#sounds-on-keyframes"),
+    ("sound.analyse", "images-and-sound.md#convert-audio-to-keyframes"),
+    ("sound.lip_sync", "images-and-sound.md#auto-lip-sync"),
+    ("sound.to_keyframes", "images-and-sound.md#convert-audio-to-keyframes"),
     ("stroke.", "drawing.md#line-styles"),
     ("swatch.", "drawing.md#swatches"),
     ("symbol.", "symbols-and-library.md#making-a-symbol"),
@@ -327,13 +343,24 @@ pub fn subject(app: &App, ctx: &egui::Context, pointer: bool) -> Subject {
     if app.convert.is_some() {
         return Subject::Dialog(Dialog::ConvertSymbol);
     }
+    // Expand Fill and Soften Fill Edges (ADR 0109).
+    if app.shape_dialog.is_some() {
+        return Subject::Dialog(Dialog::ShapeEdges);
+    }
+    // Convert Audio to Keyframes and Auto Lip-Sync (ADR 0114).
+    if let Some(d) = &app.audio_keys {
+        return Subject::Dialog(match d.kind {
+            crate::audio_keys::Kind::Keys => Dialog::AudioKeys,
+            crate::audio_keys::Kind::Lips => Dialog::LipSync,
+        });
+    }
     if app.plugin_dialog.is_some() {
         return Subject::Dialog(Dialog::PluginSettings);
     }
     if app.templates.save.is_some() {
         return Subject::Dialog(Dialog::SaveTemplate);
     }
-    if app.close_dialog {
+    if app.tabs.asking() {
         return Subject::Dialog(Dialog::CloseUnsaved);
     }
     if let Some(p) = &app.palette {
@@ -495,7 +522,8 @@ mod tests {
         app.show_prefs = false;
         settle(&ctx, &mut app);
         // A dialog that asks first: help for the command it asks about.
-        app.close_dialog = true;
+        app.run("layer.new", serde_json::json!({}));
+        crate::tabs::quit(&mut app);
         assert_eq!(subject(&app, &ctx, true), Subject::Dialog(Dialog::CloseUnsaved));
         frame(&ctx, &mut app, f1());
         assert_eq!(app.help_opened.as_deref(), Some("getting-started.md#save-your-work"), "F1 works while a dialog holds the editor");

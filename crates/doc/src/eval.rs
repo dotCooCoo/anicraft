@@ -317,22 +317,24 @@ pub struct Progress {
     pub scale: f32,
     pub color: f32,
     pub filters: f32,
+    /// The scale axes move geometrically (the tween's Keep area, ADR 0115).
+    pub keep_area: bool,
 }
 
 impl Progress {
     /// Everything at `t`.
     pub fn uniform(t: f32) -> Progress {
-        Progress { main: t, position: t, rotation: t, scale: t, color: t, filters: t }
+        Progress { main: t, position: t, rotation: t, scale: t, color: t, filters: t, keep_area: false }
     }
 
     /// `tween` at linear progress `t`.
     pub fn of(tween: &crate::Tween, t: f32) -> Progress {
         let main = tween.easing.apply(t);
         if tween.groups.is_empty() {
-            return Progress::uniform(main);
+            return Progress { keep_area: tween.keep_area, ..Progress::uniform(main) };
         }
         let g = |g: crate::EaseGroup| if tween.has_own(g) { tween.ease(g).apply(t) } else { main };
-        Progress { main, position: g(crate::EaseGroup::Position), rotation: g(crate::EaseGroup::Rotation), scale: g(crate::EaseGroup::Scale), color: g(crate::EaseGroup::Color), filters: g(crate::EaseGroup::Filters) }
+        Progress { main, position: g(crate::EaseGroup::Position), rotation: g(crate::EaseGroup::Rotation), scale: g(crate::EaseGroup::Scale), color: g(crate::EaseGroup::Color), filters: g(crate::EaseGroup::Filters), keep_area: tween.keep_area }
     }
 }
 
@@ -536,11 +538,40 @@ fn interpolate(a: &Element, b: &Element, pr: Progress, morph: bool, hints: &[(an
         let (r, s) = (da.lerp(&db, pr.rotation), da.lerp(&db, pr.scale));
         (d.rotation, d.skew, d.sx, d.sy) = (r.rotation, r.skew, s.sx, s.sy);
     }
+    // Keep area (ADR 0115): each scale axis goes geometrically from its key to the next, so
+    // the area (sx · sy; skew and rotation don't change it) of two keys that share it stays on
+    // every frame, and eases smoothly from one to the other when they don't.
+    if pr.keep_area {
+        d.sx = anicraft_geom::lerp_geometric(da.sx, db.sx, pr.scale);
+        d.sy = anicraft_geom::lerp_geometric(da.sy, db.sy, pr.scale);
+    }
     let mut transform = d.compose();
+    // An instance with a transformation point (ADR 0111) turns, scales and skews about it: the
+    // point travels from where the first keyframe has it to where the next does, and the
+    // instance is placed round it. (A keyframe without one takes the other's.) Without a
+    // point this is the registration point, as above.
+    let pivot = match (a.pivot().or(b.pivot()), b.pivot().or(a.pivot())) {
+        (Some(pa), Some(pb)) => {
+            let (qa, qb) = (a.transform.apply(pa), b.transform.apply(pb));
+            let (q, p) = (qa + (qb - qa) * pr.position, pa + (pb - pa) * pr.position);
+            let about = Affine { m: [transform.m[0], transform.m[1], transform.m[2], transform.m[3], 0.0, 0.0] };
+            let o = about.apply(p);
+            let placed = Affine::translate(q.x - o.x, q.y - o.y).mul(&about);
+            if placed.is_finite() {
+                transform = placed;
+            }
+            Some(p)
+        }
+        _ => None,
+    };
     if let Some((g, orient)) = guide {
         transform = follow(g, orient, &a.transform, &b.transform, pr.position, transform);
     }
-    Some(Element { id: a.id, name: a.name.clone(), transform, color: a.color.lerp(&b.color, pr.color), kind })
+    let mut el = Element { id: a.id, name: a.name.clone(), transform, color: a.color.lerp(&b.color, pr.color), kind };
+    if pivot.is_some() {
+        el.set_pivot(pivot);
+    }
+    Some(el)
 }
 
 /// What a timeline is evaluated inside of.
@@ -662,6 +693,9 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
     // Deepest first, ties in timeline order (ADR 0082); depth belongs to a scene's own layers.
     // (Only sorted when some layer has a depth: nested timelines allocate nothing.)
     let sorted = (cx.depth == 0 && tl.layers.iter().any(|l| l.has_depth())).then(|| tl.draw_order(frame));
+    // Each layer's space (ADR 0113): a layer with a parent layer is placed by that layer's
+    // lead object at this frame. (Only worked out when some layer has a parent.)
+    let rig = tl.has_rig().then(|| tl.rig_spaces(frame, doc.stage.fps));
     let n = tl.layers.len();
     for k in 0..n {
         let index = sorted.as_ref().map_or(n - 1 - k, |o| o.get(k).copied().unwrap_or(n));
@@ -693,7 +727,25 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
             },
             None => cx.xf,
         };
+        let layer_xf = match rig.as_ref().and_then(|r| r.get(index)) {
+            Some(space) => layer_xf.mul(space),
+            None => layer_xf,
+        };
         let lc = LayerCtx { layer, frame, kf_start, clip, masks, guide, outline: layer_outline, xf: layer_xf };
+        // A layer below full opacity (its own, or a folder's it is in; ADR 0111) fades as one:
+        // its artwork composites in a group, and the group blends at the layer's opacity, so
+        // its overlapping parts don't show through each other. Mask artwork ignores opacity,
+        // and guide artwork is never in the movie; an empty frame needs no group.
+        let fade = if masks.is_none() && !guide && !elements.is_empty() { tl.layer_opacity(index) } else { 1.0 };
+        let faded;
+        let cx = if fade < 1.0 - 1e-4 {
+            let gid = out.groups.len() as u32;
+            out.groups.push(Group { parent: cx.group, alpha: fade, blend: crate::BlendMode::Normal, filters: Arc::from(Vec::new()), clip });
+            faded = Ctx { group: Some(gid), ..*cx };
+            &faded
+        } else {
+            cx
+        };
         for el in elements.iter() {
             eval_element(doc, cx, &lc, el, out, play);
         }
@@ -985,3 +1037,7 @@ fn sliced_shape(s: &Shape, own: &Affine, sl: &Slicing) -> (Arc<Path>, Affine, Op
 #[cfg(test)]
 #[path = "eval_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pivot_tests.rs"]
+mod pivot_tests;

@@ -341,6 +341,8 @@ fn own_window(app: &mut App, ctx: &egui::Context) -> Asked {
         builder = builder.with_position(at);
     }
     let builder = crate::platform::secondary_window(builder);
+    // The window's surface is set up and drawn inside the call (ADR 0105).
+    let _paused = crate::gpu_stage::paused();
     ctx.show_viewport_immediate(viewport_id(), builder, |ui, class| {
         let mut asked = Asked::default();
         let (close_requested, outer) = ui.input(|i| (i.viewport().close_requested(), i.viewport().outer_rect));

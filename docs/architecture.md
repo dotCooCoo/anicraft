@@ -166,7 +166,8 @@ frame changes), and `doc::sound::trigger` turns them into voices for Test Movie.
 DisplayList ──► for each item:
                   flatten Bézier path under (view × item) transform, tolerance 0.1 px
                   ├─ fill:   lines ──► signed-area coverage accumulator (bbox-sized)
-                  └─ stroke: polylines ──► stroker (segment quads + joins/caps, dashes; ADR 0046) ──► accumulator
+                  └─ stroke: polylines ──► stroker (one outline per run of segments with its joins and
+                             caps, dashes; ADR 0046) ──► union of the outlines (ADR 0110) ──► accumulator
                 coverage ──► fill rule (non-zero / even-odd) ──► paint shader ──► src-over blend
                            (rows of the bbox in parallel with rayon)
 ```
@@ -212,6 +213,10 @@ engine itself never depends on the GPU.
 
 ## 5. Engine (`anicraft-engine`)
 
+* One `Session` is one open document. The desktop app keeps several (ADR 0112): the one being
+  edited is `App::s`, the others are parked whole in their tabs (`src/tabs.rs`) and exchanged
+  when a tab is shown; `Session::take_shared` hands the clipboards, tool style and plug-ins
+  from one to the next. The CLI and MCP have one session.
 * `Session` owns the `Document` (a **persistent, structurally shared tree**: layers,
   keyframes, elements, paths and symbols live behind `Arc`, mutated only via `Arc::make_mut`),
   the content `state` id, the save point, the playhead, the active layer, the selection, a

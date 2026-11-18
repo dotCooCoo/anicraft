@@ -675,7 +675,7 @@ impl<'a> Bake<'a> {
                     }
                 }
             },
-            ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events } => {
+            ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events, .. } => {
                 let (Some(&y), Some(sym)) = (self.symbols.get(symbol), self.doc.symbol(*symbol)) else { return };
                 let len = sym.timeline.frame_count();
                 // The page's player places symbols itself and doesn't slice them yet (ADR 0055).
@@ -746,7 +746,8 @@ impl<'a> Bake<'a> {
     /// One timeline: its length `n`, frames as runs `f: [[content, count]…]`, mask layer count
     /// `nm`, labels `lb`, and per frame the scripts `a` and sounds `snd` of keyframes starting
     /// there (top layer first). A scene's frames seen through its camera (ADR 0027) carry the
-    /// camera's tint (`cc`) and each layer its view (`v`: the camera and the layer's depth).
+    /// camera's tint (`cc`) and each layer its view (`v`: the camera and the layer's depth). A
+    /// layer that follows a parent layer (ADR 0113) carries its space that frame (`r`).
     /// `decls`: the declarations its frame scripts share (ADR 0052), for timelines that
     /// run scripts; their functions go out as `fn` and their variables' types as `vt`.
     fn timeline(&mut self, tl: &Timeline, scene: bool, decls: Option<&Decls>) -> Value {
@@ -760,6 +761,8 @@ impl<'a> Bake<'a> {
         let mut sounds = Map::new();
         for f in 0..n {
             let camera = if scene { tl.camera_at(f, &stage) } else { None };
+            // Each layer's space this frame (ADR 0113): layers that follow a parent layer.
+            let rig = tl.has_rig().then(|| tl.rig_spaces(f, stage.fps));
             let mut layers = Vec::new();
             // Drawn deepest first, ties in timeline order, as the evaluator does (ADR 0082).
             let order = if scene { tl.draw_order(f) } else { (0..tl.layers.len()).rev().collect() };
@@ -774,9 +777,19 @@ impl<'a> Bake<'a> {
                         entry.insert("v".into(), v);
                     }
                 }
+                // Where its parent layer's object puts it this frame (`r`, ADR 0113).
+                if let Some(r) = rig.as_ref().and_then(|r| r.get(index)).and_then(matrix) {
+                    entry.insert("r".into(), r);
+                }
                 // The layer's volume, for the sounds inside the symbols on it.
                 if layer.sound_gain() != 1.0 {
                     entry.insert("sg".into(), num(layer.sound_gain(), 10_000.0));
+                }
+                // The layer's opacity (its own times its folders'; ADR 0111): the page fades
+                // the layer as one group. Mask artwork ignores it.
+                let fade = tl.layer_opacity(index);
+                if fade < 1.0 - 1e-4 && layer.kind != LayerKind::Mask {
+                    entry.insert("o".into(), num(fade, 10_000.0));
                 }
                 if layer.kind == LayerKind::Mask {
                     entry.insert("mk".into(), json!(slots.get(&layer.id.0).copied().unwrap_or(0)));
@@ -795,12 +808,16 @@ impl<'a> Bake<'a> {
                 }
                 let walk = layer.parent.and_then(|p| tl.layer(p)).filter(|g| g.kind == LayerKind::Guide).and_then(|g| guide_walk(g, f));
                 let mut items = Vec::new();
+                let mut any = false;
                 if let Some((start, els)) = evaluate_shown(layer, f, walk.as_ref(), self.doc.stage.fps) {
+                    any = !els.is_empty();
                     for el in els.iter() {
                         self.element(el, layer, f, start, &mut items);
                     }
                 }
-                if items.is_empty() && layer.kind != LayerKind::Mask {
+                // (A faded layer with elements stays, drawing or not: it is a group in the
+                // evaluator's list, and the page's groups are numbered the same.)
+                if items.is_empty() && layer.kind != LayerKind::Mask && !(any && entry.contains_key("o")) {
                     continue;
                 }
                 entry.insert("e".into(), Value::Array(items));

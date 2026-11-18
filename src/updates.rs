@@ -31,6 +31,7 @@ pub(crate) fn safe_to_install(app: &crate::app::App) -> bool {
         && app.tl_drag == crate::timeline::TlDrag::None
         && app.me_drag.is_none()
         && app.plugin_dialog.is_none()
+        && app.audio_keys.is_none()
         && app.envelope.is_none()
 }
 
@@ -425,7 +426,7 @@ mod tests {
         assert!(!app.s.is_dirty(), "the edit has not reached Session yet");
         assert!(!safe_to_install(&app), "restarting would discard the text buffer");
         app.text_edit = None;
-        app.pen = Some(crate::pathtools::PenPath { knots: vec![[anicraft_engine::geom::Vec2::ZERO; 3]], dragging: false });
+        app.pen = Some(crate::pathtools::PenPath { knots: vec![[anicraft_engine::geom::Vec2::ZERO; 3]], ..Default::default() });
         assert!(!app.s.is_dirty());
         assert!(!safe_to_install(&app), "an unfinished Pen path is also pending work");
         app.pen = None;

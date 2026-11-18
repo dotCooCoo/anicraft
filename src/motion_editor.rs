@@ -405,6 +405,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         Some(MeDrag::Key { lo, hi, lane: false, .. } | MeDrag::Handle { lo, hi, .. }) => (lo, hi),
         _ => value_range(track, own(p), frames, p),
     };
+    // Keep area (ADR 0115): a scale curve shows as the tween plays it, geometric between its
+    // keys, or derived from the other axis when it has no keys of its own.
+    let kept = m.keep_area && matches!(p, Property::ScaleX | Property::ScaleY);
+    let shown = |f: f32| if kept { m.shown_value(&base, p, f) } else { track.and_then(|t| t.value_at(f)).unwrap_or(own(p)) };
+    let (lo, hi) = if kept && app.me_drag.is_none() {
+        let (mut a, mut b) = (lo, hi);
+        for f in 0..frames.max(1) {
+            let v = shown(f as f32);
+            (a, b) = (a.min(v), b.max(v));
+        }
+        let pad = if a < lo || b > hi { (b - a).max(1.0) * 0.08 } else { 0.0 };
+        (if a < lo { a - pad } else { lo }, if b > hi { b + pad } else { hi })
+    } else {
+        (lo, hi)
+    };
     let last = frames.saturating_sub(1).max(1) as f32;
     // Wider on the left: the value labels sit there, clear of the first key.
     let inner = Rect::from_min_max(graph.min + vec2(PAD * 2.0, PAD * 0.75), graph.max - vec2(PAD, PAD * 0.75));
@@ -452,13 +467,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let mut x = inner.left();
     while x <= inner.right() + 0.5 {
         let f = f_of(x);
-        let v = track.and_then(|t| t.value_at(f)).unwrap_or(own(p));
-        pts.push(pos2(x, y_of(v)));
+        pts.push(pos2(x, y_of(shown(f))));
         x += 2.0;
     }
-    gp.add(egui::Shape::line(pts, Stroke::new(2.0, if track.is_some() { T.tween_motion } else { T.text_faint })));
+    let derived = m.is_derived(p);
+    gp.add(egui::Shape::line(pts, Stroke::new(2.0, if track.is_some() || derived { T.tween_motion } else { T.text_faint })));
     gp.text(pos2(graph.right() - 8.0, graph.top() + 6.0), Align2::RIGHT_TOP, format!("{label} · {}", fmt(p, now_of(p))), font(Type::Data), color(Type::Data));
-    if track.is_none() {
+    if kept {
+        // Say why the curve isn't the straight line between its keys.
+        let note = match (derived, p) {
+            (true, Property::ScaleX) => tr!("Keep area: follows Scale Y"),
+            (true, _) => tr!("Keep area: follows Scale X"),
+            (false, _) => tr!("Keep area"),
+        };
+        gp.text(pos2(graph.right() - 8.0, graph.top() + 24.0), Align2::RIGHT_TOP, note, font(Type::Caption), color(Type::Caption));
+    }
+    if derived {
+        // No keys of its own, but it moves: say what moves it and how to take it over.
+        gp.text(pos2(graph.center().x, graph.top() + 44.0), Align2::CENTER_CENTER, tr!("{property} has no keyframes: Keep area moves it against the other scale axis. Click ◇ or drag its value to key it yourself.", property = label), font(Type::Caption), color(Type::Caption));
+    } else if track.is_none() {
         gp.text(graph.center(), Align2::CENTER_CENTER, tr!("{property} has no keyframes: it stays {value}. Click ◇ or drag its value to key it here.", property = label, value = fmt(p, own(p))), font(Type::Caption), color(Type::Caption));
     }
     // A colour's channel: the whole colour over the span, along the bottom of the graph, so
@@ -707,7 +734,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     {
         // A key on the curve where it is now (the motion doesn't change until it is dragged).
         let f = to_frame(pt.x);
-        let v = track.and_then(|t| t.value_at((f - start) as f32)).unwrap_or(own(p));
+        let v = shown((f - start) as f32);
         if app.run("motion.set_key", json!({"property": p.key(), "frame": f, "value": v})).is_some() {
             app.me_key = Some(f - start);
         }
@@ -720,7 +747,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         };
     }
 
-    footer(app, ui, body, track, sel_key, start, &rows, &label);
+    footer(app, ui, body, track, sel_key, start, &rows, &label, m.keep_area);
 }
 
 /// The name of the object's filter at `slot` (Animate's, for the list and screen readers).
@@ -886,7 +913,7 @@ fn diamond(p: &egui::Painter, c: Pos2, r: f32, fill: Color32, stroke: Stroke) {
 
 /// The ease of the selected segment, and the tween's own actions.
 #[allow(clippy::too_many_arguments)]
-fn footer(app: &mut App, ui: &mut egui::Ui, body: Rect, track: Option<&Track>, sel_key: Option<u32>, start: u32, rows: &[Property], label: &str) {
+fn footer(app: &mut App, ui: &mut egui::Ui, body: Rect, track: Option<&Track>, sel_key: Option<u32>, start: u32, rows: &[Property], label: &str, keep_area: bool) {
     let bar = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER_H), body.right_bottom());
     ui.painter().rect_filled(bar, SQUARE, T.panel_alt);
     ui.painter().line_segment([bar.left_top(), bar.right_top()], Stroke::new(1.0, T.border));
@@ -936,6 +963,10 @@ fn footer(app: &mut App, ui: &mut egui::Ui, body: Rect, track: Option<&Track>, s
         .response
         .on_hover_text(tr!("List a colour effect style's properties here; keying one adds it to the tween"));
     }
+    let mut keep = keep_area;
+    if crate::theme::checkbox(ui, &mut keep, tr!("Keep area")).on_hover_text(tr!("Squash and stretch without growing: scale goes geometrically between keys, and a scale axis without keys follows the other so the area stays")).named(tr!("Keep area")).changed() {
+        app.run("timeline.set_keep_area", json!({"keep_area": keep, "frame": start}));
+    }
     if ui.button(tr!("Remove Tween")).on_hover_text(tr!("The object stays as it is on the span's first frame ({undo} to undo)", undo = app.undo_key())).clicked() {
         app.run("timeline.remove_tween", json!({}));
     }
@@ -974,7 +1005,7 @@ mod tests {
         use anicraft_engine::doc::{ColorEffect, ElementId, ElementKind, Filter, FilterEntry, SymbolId};
         use anicraft_engine::geom::Affine;
         let filters = vec![FilterEntry::from(Filter::new("blur").unwrap()), FilterEntry { filter: Filter::new("adjust_color").unwrap(), enabled: false }];
-        let clip = Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters, events: Vec::new() } };
+        let clip = Element { id: ElementId(1), name: String::new(), transform: Affine::IDENTITY, color: ColorEffect::default(), kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters, events: Vec::new(), pivot: None } };
         let names = |rows: Vec<Row>| -> Vec<String> {
             rows.iter()
                 .skip_while(|r| matches!(r, Row::Prop(p) if !p.is_filter()))
@@ -988,7 +1019,7 @@ mod tests {
         assert_eq!(names(rows_for(&[], &[], &clip, &[])), ["[0 Blur true]", "filter.0.blur_x", "filter.0.blur_y", "filter.0.quality", "[1 Adjust Color false]", "filter.1.brightness", "filter.1.contrast", "filter.1.saturation", "filter.1.hue"]);
         // ADR 0099: a colour is one row; its channels are listed when it is open; quality and
         // the switches come last.
-        let glow = Element { kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: vec![Filter::new("glow").unwrap().into()], events: Vec::new() }, ..clip.clone() };
+        let glow = Element { kind: ElementKind::Symbol { symbol: SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: vec![Filter::new("glow").unwrap().into()], events: Vec::new(), pivot: None }, ..clip.clone() };
         assert_eq!(names(rows_for(&[], &[], &glow, &[])), ["[0 Glow true]", "filter.0.blur_x", "filter.0.blur_y", "filter.0.strength", "(0 color)", "filter.0.quality", "filter.0.inner", "filter.0.knockout"]);
         let open = names(rows_for(&[], &[], &glow, &[(0, FilterColor::Color)]));
         assert_eq!(open[4..9], ["(0 color)", "filter.0.color_red", "filter.0.color_green", "filter.0.color_blue", "filter.0.color_alpha"]);

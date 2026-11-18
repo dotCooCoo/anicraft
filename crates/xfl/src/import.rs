@@ -658,7 +658,7 @@ impl<'a> Builder<'a> {
         // Blend modes by Animate's names; unknown ones stay Normal.
         let blend = el.attr("blendMode").and_then(BlendMode::from_key).unwrap_or_default();
         let filters = self.filters(el);
-        let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m, color: fx, kind: ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events: Vec::new() } };
+        let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m, color: fx, kind: ElementKind::Symbol { symbol, loop_mode, first_frame, blend, filters, events: Vec::new(), pivot: None } };
         // The instance name actions address it by (ADR 0024); one they couldn't is reported.
         if let Some(name) = el.attr("name").map(str::trim).filter(|n| !n.is_empty()) {
             if anicraft_doc::actions::valid_instance_name(name) {
@@ -684,13 +684,15 @@ impl<'a> Builder<'a> {
                 // Shapes loose on a frame, or in a group, are raw shapes (a group's merge only with
                 // each other, ADR 0073); drawing objects say so.
                 "DOMShape" => self.shape(el, parent, out, true),
-                // A group (ADR 0073): its members in its own space, placed by its matrix.
+                // A group (ADR 0073); Animate writes members in its parent space, so bring them into its frame.
                 "DOMGroup" if depth < anicraft_doc::MAX_GROUP_DEPTH => {
+                    let m = matrix(el);
+                    let (own, into_own) = m.inverse().map(|inv| (m, inv)).unwrap_or_default();
                     let mut members = Vec::new();
-                    self.elements(el.list("members"), &Affine::IDENTITY, &mut members, depth + 1);
+                    self.elements(el.list("members"), &into_own, &mut members, depth + 1);
                     if !members.is_empty() {
                         let layer = LayerId(self.doc.alloc_id());
-                        let g = self.element(ElementKind::group(layer, members), parent.mul(&matrix(el)), ColorEffect::default());
+                        let g = self.element(ElementKind::group(layer, members), parent.mul(&own), ColorEffect::default());
                         out.push(g);
                     }
                 }
@@ -763,7 +765,7 @@ impl<'a> Builder<'a> {
                             self.report.skip("tween spins (turned the shortest way)");
                         }
                         let (easing, groups) = self.easing(f);
-                        k.tween = Some(Tween { easing, kind, orient, groups });
+                        k.tween = Some(Tween { easing, kind, orient, groups, keep_area: false });
                     }
                     craft_xfl::document::TweenType::MotionObject => self.report.skip("motion tweens (kept as keyframes)"),
                     craft_xfl::document::TweenType::Other => {}
@@ -1463,7 +1465,16 @@ fn fla_from(data: &[u8], fonts: Option<&Fonts>) -> Result<(Document, Report), Xf
             "this .fla was saved by Flash CS4 or earlier, in a format AniCraft can't read: open it in Animate and save it again".into(),
         ));
     }
-    let archive = crate::zip::Archive::open(data)?;
+    // Flash and Animate write end records that overstate the directory's size (#356): the
+    // shared reader refuses those, so the record is corrected in a copy and read again.
+    let corrected;
+    let archive = match crate::zip::Archive::open(data) {
+        Ok(a) => a,
+        Err(e) => {
+            corrected = crate::end_record::with_measured_directory(data).ok_or(e)?;
+            crate::zip::Archive::open(&corrected)?
+        }
+    };
     let root = package_root(&archive)?;
     let read = |p: &str| -> Result<Option<Vec<u8>>, XflError> { Ok(archive.read(&format!("{root}{p}"))?) };
     import_from(&read, fonts)

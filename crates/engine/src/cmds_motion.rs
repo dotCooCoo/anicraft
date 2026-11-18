@@ -115,6 +115,12 @@ pub(crate) fn finish_edit(s: &mut Session, e: MotionEdit) {
         if !d.is_finite() || d.abs() <= 1e-4 {
             continue;
         }
+        // Keep area (ADR 0115): a scale axis that follows the other has no curve of its own. A
+        // tool that drags the other axis puts this one back where the gesture found it (its
+        // resting value), which isn't an edit of it: it goes on following.
+        if m.is_derived(p) && (now_dec.get(p) - m.track(p).and_then(|t| t.value_at(e.offset as f32)).unwrap_or(base_props.get(p))).abs() <= 1e-3 {
+            continue;
+        }
         let v = was.get(p) + d;
         if e.offset == 0 && m.track(p).is_none() {
             new_base.set(p, v);
@@ -270,7 +276,7 @@ fn set_path(s: &mut Session, p: &Value) -> Result<Value> {
     if d.len() > MAX_PATH_DATA {
         return Err(EngineError::Param("param 'd' is too long".into()));
     }
-    let path = anicraft_geom::svg::parse_path_data(d).map_err(|e| EngineError::Param(format!("param 'd': {e}")))?;
+    let path = anicraft_svg::parse_path_data(d).map_err(|e| EngineError::Param(format!("param 'd': {e}")))?;
     let (kf, _) = motion_span(s, p)?;
     let base = base_of(kf)?;
     let (start, last) = (kf.start, kf.duration.saturating_sub(1));
@@ -886,5 +892,5 @@ fn info(s: &mut Session, p: &Value) -> Result<Value> {
     let anchors: Vec<[f32; 2]> = m.path.clone().or_else(|| base.and_then(|b| m.path_from_tracks(&b))).map(|p| p.anchors().into_iter().map(|(_, q)| [q.x, q.y]).collect()).unwrap_or_default();
     // And those tied to frames, ends included (ADR 0049).
     let pins = base.map_or(Value::Array(Vec::new()), |b| pins_json(m, kf.start, &b));
-    Ok(json!({"layer": lid.0, "start": kf.start, "frames": kf.duration, "target": m.target.0, "tracks": tracks, "values": values, "position": position, "path": path, "anchors": anchors, "pins": pins, "orient": m.orient}))
+    Ok(json!({"layer": lid.0, "start": kf.start, "frames": kf.duration, "target": m.target.0, "tracks": tracks, "values": values, "position": position, "path": path, "anchors": anchors, "pins": pins, "orient": m.orient, "keep_area": m.keep_area}))
 }

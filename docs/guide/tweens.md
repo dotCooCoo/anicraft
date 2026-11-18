@@ -36,6 +36,24 @@ AniCraft adds a keyframe there for you.
 To take a tween away, choose **Insert › Remove Tween**. The frames keep the first keyframe's
 artwork.
 
+### Squash and stretch that keeps its area
+
+A ball squashed to half its height should spread to twice its width, and stay that full on
+the way. A tween normally moves width and height in straight lines, so the frames in between
+come out bigger than either keyframe. Turn on **Keep area** in **Properties › Frame** and the
+tween scales the way a squash does: from 100 × 100 % to 200 × 50 %, the halfway frame is about
+141 × 71 %, and the area is the same on every frame.
+
+* It works on classic, shape and motion tweens, one tween at a time, and is off until you turn
+  it on. Your eases apply as before.
+* If the two keyframes have different areas, the area changes smoothly from one to the other.
+* An object that is flipped on one keyframe and not on the other tweens the usual way.
+* On a **motion tween** you only need to key one direction. Stretch the width at a later
+  frame and the height squashes by itself to keep the area of the first frame. Key the height
+  too whenever you want to set it yourself. The Motion Editor has the same **Keep area**
+  checkbox and draws the curve the height follows.
+* Every export shows the same squash.
+
 ## Easing
 
 Easing makes motion speed up or slow down instead of moving at one steady pace. Pick an ease

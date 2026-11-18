@@ -426,6 +426,12 @@ impl Track {
     /// The value at `frame` (fractional frames sample the curve between frames): the first
     /// key's value before it, the last key's after it, the segment's ease in between.
     pub fn value_at(&self, frame: f32) -> Option<f32> {
+        self.sample(frame, false)
+    }
+
+    /// [`Track::value_at`], going geometrically between keys when `geometric` (a scale track
+    /// of a tween that keeps area, ADR 0115) instead of in a straight line.
+    pub fn sample(&self, frame: f32, geometric: bool) -> Option<f32> {
         let first = self.keys.first()?;
         let last = self.keys.last()?;
         if !frame.is_finite() || frame <= first.frame as f32 {
@@ -444,6 +450,9 @@ impl Track {
         }
         let span = (b.frame - a.frame).max(1) as f32;
         let t = a.ease.apply((frame - a.frame as f32) / span);
+        if geometric {
+            return Some(anicraft_geom::lerp_geometric(a.value, b.value, t));
+        }
         Some(a.value + (b.value - a.value) * t)
     }
 
@@ -546,6 +555,10 @@ pub struct MotionTween {
     /// Anchors between the ends pinned to frames (ADR 0049), by frame; both frames and anchors
     /// increase. Files from before pins have none: only the ends are pinned.
     pub pins: Vec<Pin>,
+    /// Keep area (ADR 0115): the scale curves go geometrically between their keys, and a
+    /// scale axis without keys of its own follows the other inversely, so the area the object
+    /// has on the span's first frame stays. See [`MotionTween::scale_at`].
+    pub keep_area: bool,
 }
 
 /// A [`MotionTween`] as files hold it.
@@ -563,20 +576,22 @@ struct TweenFile {
     orient: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pins: Vec<Pin>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    keep_area: bool,
 }
 
 impl From<TweenFile> for MotionTween {
     fn from(f: TweenFile) -> MotionTween {
         let mut tracks = f.tracks;
         tracks.extend(f.filter_tracks);
-        MotionTween { target: f.target, tracks, path: f.path, orient: f.orient, pins: f.pins }
+        MotionTween { target: f.target, tracks, path: f.path, orient: f.orient, pins: f.pins, keep_area: f.keep_area }
     }
 }
 
 impl From<MotionTween> for TweenFile {
     fn from(m: MotionTween) -> TweenFile {
         let (filter_tracks, tracks) = m.tracks.into_iter().partition(|t| t.property.is_filter());
-        TweenFile { target: m.target, tracks, filter_tracks, path: m.path, orient: m.orient, pins: m.pins }
+        TweenFile { target: m.target, tracks, filter_tracks, path: m.path, orient: m.orient, pins: m.pins, keep_area: m.keep_area }
     }
 }
 
@@ -732,7 +747,7 @@ impl OnPath<'_> {
 
 impl MotionTween {
     pub fn new(target: ElementId) -> MotionTween {
-        MotionTween { target, tracks: Vec::new(), path: None, orient: false, pins: Vec::new() }
+        MotionTween { target, tracks: Vec::new(), path: None, orient: false, pins: Vec::new(), keep_area: false }
     }
 
     /// The first and last frames holding an X or Y key.
@@ -1103,6 +1118,59 @@ impl MotionTween {
         true
     }
 
+    /// Places the whole motion by `m` (ADR 0113): the target, whose own transform the caller
+    /// places the same way, then shows at `m` times where it showed, on every frame that has a
+    /// key. A move alone shifts the path and the X/Y keys ([`MotionTween::translate`]); a turn,
+    /// scale or skew rewrites the transform keys at each keyed frame (between keys the
+    /// properties interpolate as before, each on its own), and the path is carried along.
+    /// `base` is the target as it is before the caller places it.
+    pub fn place(&mut self, base: &Element, m: &Affine) {
+        if !m.is_finite() || (self.path.is_none() && !self.tracks.iter().any(|t| t.property.is_transform())) {
+            return;
+        }
+        let [a, b, c, d, tx, ty] = m.m;
+        if (a, b, c, d) == (1.0, 0.0, 0.0, 1.0) {
+            self.translate(Vec2::new(tx, ty));
+            return;
+        }
+        const TRANSFORM: [Property; 6] = [Property::X, Property::Y, Property::ScaleX, Property::ScaleY, Property::Rotation, Property::Skew];
+        let mut frames: Vec<u32> = self.tracks.iter().filter(|t| t.property.is_transform()).flat_map(|t| t.keys.iter().map(|k| k.frame)).collect();
+        frames.push(0);
+        frames.sort_unstable();
+        frames.dedup();
+        let base_props = Props::of(base);
+        let mut placed = base.clone();
+        placed.transform = m.mul(&base.transform);
+        let new_base = Props::of(&placed);
+        // Every keyed frame's values as they will be, read before any key changes.
+        let mut values: Vec<(u32, Props)> = Vec::with_capacity(frames.len());
+        for &f in &frames {
+            let old = self.props_at(&base_props, f as f32);
+            let was = old.transform();
+            placed.transform = m.mul(&was);
+            let mut now = Props::of(&placed);
+            // Rotation keeps its turns: the keyed value moves by how far the placing turns it.
+            let turn = (now.get(Property::Rotation) - Props::of(&Element { transform: was, ..placed.clone() }).get(Property::Rotation)).rem_euclid(360.0);
+            let turn = if turn > 180.0 { turn - 360.0 } else { turn };
+            now.set(Property::Rotation, old.get(Property::Rotation) + turn);
+            values.push((f, now));
+        }
+        for p in TRANSFORM {
+            let varies = values.iter().any(|(_, v)| (v.get(p) - new_base.get(p)).abs() > 1e-3);
+            if self.track(p).is_none() && !varies {
+                continue;
+            }
+            for (f, v) in &values {
+                if v.get(p).is_finite() {
+                    self.set_key(p, *f, v.get(p), new_base.get(p));
+                }
+            }
+        }
+        if let Some(moved) = self.path.as_ref().and_then(|p| motion_path(&p.transformed(m))) {
+            self.path = Some(moved);
+        }
+    }
+
     pub fn track(&self, p: Property) -> Option<&Track> {
         self.tracks.iter().find(|t| t.property == p)
     }
@@ -1125,7 +1193,64 @@ impl MotionTween {
                 out.set(t.property, v);
             }
         }
+        if self.keep_area {
+            let (sx, sy) = self.scale_at(base, frame);
+            out.set(Property::ScaleX, sx);
+            out.set(Property::ScaleY, sy);
+        }
         out
+    }
+
+    /// Scale X and Y (percent) at `frame`, as the tween shows them. Without Keep area these
+    /// are the two curves. With it (ADR 0115):
+    ///
+    /// * each curve goes geometrically between its keys, so keys of one area keep it on the
+    ///   frames between them;
+    /// * an axis that isn't animated (no track, or fewer than two keys) follows the animated
+    ///   one inversely, holding the area of the span's first frame: stretch one axis and the
+    ///   other squashes by itself.
+    pub fn scale_at(&self, base: &Props, frame: f32) -> (f32, f32) {
+        let geo = self.keep_area;
+        let v = |p: Property, f: f32| self.track(p).and_then(|t| t.sample(f, geo)).unwrap_or(base.get(p));
+        let (x, y) = (v(Property::ScaleX, frame), v(Property::ScaleY, frame));
+        if !geo {
+            return (x, y);
+        }
+        let animated = |p: Property| self.track(p).is_some_and(|t| t.keys.len() >= 2);
+        // `follower` at its own (constant) value times how far the driver has shrunk.
+        let derived = |driver: Property, now: f32, follower: f32| {
+            let start = v(driver, 0.0);
+            let d = follower * start / now;
+            if now != 0.0 && d.is_finite() { Property::ScaleX.clamp(d) } else { follower }
+        };
+        match (animated(Property::ScaleX), animated(Property::ScaleY)) {
+            (true, false) => (x, derived(Property::ScaleX, x, y)),
+            (false, true) => (derived(Property::ScaleY, y, x), y),
+            _ => (x, y),
+        }
+    }
+
+    /// Property `p` at `frame` as the tween shows it: its curve (the object's own value where
+    /// it has none), or for a scale axis of a tween that keeps area the curve
+    /// [`MotionTween::scale_at`] derives. What the Motion Editor draws.
+    pub fn shown_value(&self, base: &Props, p: Property, frame: f32) -> f32 {
+        match p {
+            Property::ScaleX if self.keep_area => self.scale_at(base, frame).0,
+            Property::ScaleY if self.keep_area => self.scale_at(base, frame).1,
+            p => self.track(p).and_then(|t| t.value_at(frame)).unwrap_or(base.get(p)),
+        }
+    }
+
+    /// Whether Keep area derives `p` from the other scale axis (it has no curve of its own to
+    /// edit while the other axis is animated).
+    pub fn is_derived(&self, p: Property) -> bool {
+        let animated = |p: Property| self.track(p).is_some_and(|t| t.keys.len() >= 2);
+        self.keep_area
+            && match p {
+                Property::ScaleX => !animated(Property::ScaleX) && animated(Property::ScaleY),
+                Property::ScaleY => !animated(Property::ScaleY) && animated(Property::ScaleX),
+                _ => false,
+            }
     }
 
     /// The target as it looks `frame` frames into the span. Untracked properties keep the
@@ -1160,7 +1285,16 @@ impl MotionTween {
             }
         }
         if on_path.is_some() || self.tracks.iter().any(|t| t.property.is_transform()) {
-            let m = props.transform();
+            let mut m = props.transform();
+            // With a transformation point (ADR 0111) the position tracks carry the point, and
+            // the target turns, scales and skews about it.
+            if let Some(p) = base.pivot() {
+                let (d0, d1) = (base_props.transform().translation(), m.translation());
+                let at = base.transform.apply(p) + (d1 - d0);
+                let about = Affine { m: [m.m[0], m.m[1], m.m[2], m.m[3], 0.0, 0.0] };
+                let o = about.apply(p);
+                m = Affine::translate(at.x - o.x, at.y - o.y).mul(&about);
+            }
             if m.is_finite() {
                 el.transform = m;
             }
@@ -1249,14 +1383,15 @@ impl MotionTween {
             .tracks
             .iter()
             .filter_map(|t| {
-                let v = t.value_at(frame as f32)?;
+                // A scale curve of a tween that keeps area is cut where it shows (ADR 0115).
+                let v = t.sample(frame as f32, self.keep_area && matches!(t.property, Property::ScaleX | Property::ScaleY))?;
                 let ease = t.segment_at(frame).and_then(|i| t.keys.get(i)).map_or(Easing::Linear, |k| k.ease.clone());
                 let mut keys = vec![PropertyKey { frame: 0, value: v, ease }];
                 keys.extend(t.keys.iter().filter(|k| k.frame > frame).map(|k| PropertyKey { frame: k.frame - frame, ..k.clone() }));
                 Some(Track { property: t.property, keys })
             })
             .collect();
-        let mut tail = MotionTween { target: self.target, tracks, path: None, orient: self.orient, pins: Vec::new() };
+        let mut tail = MotionTween { target: self.target, tracks, path: None, orient: self.orient, pins: Vec::new(), keep_area: self.keep_area };
         let Some(op) = self.on_path(base) else { return tail };
         let f = frame as f32;
         match op.walk().tail(op.distance(f)) {
@@ -1347,6 +1482,75 @@ mod tests {
 
     fn track(p: Property, keys: &[(u32, f32, Easing)]) -> Track {
         Track { property: p, keys: keys.iter().map(|(frame, value, ease)| PropertyKey { frame: *frame, value: *value, ease: ease.clone() }).collect() }
+    }
+
+    /// Scale X and Y (percent) of `m`'s target at `frame`, and their product.
+    fn scale(m: &MotionTween, base: &Element, frame: f32) -> (f32, f32, f32) {
+        let d = m.apply(base, frame).transform.decompose();
+        (d.sx * 100.0, d.sy * 100.0, d.sx * d.sy)
+    }
+
+    #[test]
+    fn keep_area_goes_geometrically_between_scale_keys() {
+        // Issue #408 on a motion tween: both axes keyed, 100 x 100 % to 200 x 50 % and back.
+        let base = el(1, 0.0, 0.0);
+        let mut m = MotionTween::new(ElementId(1));
+        m.tracks = vec![
+            track(Property::ScaleX, &[(0, 100.0, Easing::QuadOut), (10, 200.0, Easing::BackIn), (20, 100.0, Easing::Linear)]),
+            track(Property::ScaleY, &[(0, 100.0, Easing::QuadOut), (10, 50.0, Easing::BackIn), (20, 100.0, Easing::Linear)]),
+        ];
+        assert!((scale(&m, &base, 5.0).2 - 1.0).abs() > 0.05, "straight lines bulge");
+        let before: Vec<_> = (0..=20).map(|f| m.apply(&base, f as f32).transform.m.map(f32::to_bits)).collect();
+        m.keep_area = true;
+        for f in 0..=40 {
+            let (x, y, a) = scale(&m, &base, f as f32 / 2.0);
+            assert!((a - 1.0).abs() < 2e-5, "frame {}: {x} x {y} = {a}", f as f32 / 2.0);
+        }
+        // The keys show as they are, and the option round-trips through a file.
+        assert_eq!(scale(&m, &base, 10.0).0, 200.0);
+        let back: MotionTween = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(back, m);
+        // Off again: bit for bit what it was, and nothing about it in the file.
+        m.keep_area = false;
+        assert_eq!((0..=20).map(|f| m.apply(&base, f as f32).transform.m.map(f32::to_bits)).collect::<Vec<_>>(), before);
+        assert!(!serde_json::to_string(&m).unwrap().contains("keep_area"));
+    }
+
+    #[test]
+    fn keep_area_makes_an_unkeyed_scale_axis_follow_the_other_inversely() {
+        // Only Scale X is keyed: Scale Y is derived so the first frame's area (150 % x 80 %)
+        // stays, whatever the ease does (Back overshoots).
+        let mut base = el(1, 0.0, 0.0);
+        base.transform = Decomposed { tx: 3.0, ty: 4.0, sx: 1.5, sy: 0.8, rotation: 0.4, skew: 0.0 }.compose();
+        let mut m = MotionTween::new(ElementId(1));
+        m.tracks = vec![track(Property::ScaleX, &[(0, 150.0, Easing::BackOut), (8, 300.0, Easing::Linear), (16, 60.0, Easing::Linear)])];
+        m.keep_area = true;
+        let props = Props::of(&base);
+        assert!(m.is_derived(Property::ScaleY) && !m.is_derived(Property::ScaleX));
+        for f in 0..=32 {
+            let f = f as f32 / 2.0;
+            let (x, y, a) = scale(&m, &base, f);
+            assert!((a - 1.2).abs() < 1e-4, "frame {f}: {x} x {y} = {a}");
+            // The Motion Editor draws the derived curve from the same numbers.
+            assert!((m.shown_value(&props, Property::ScaleY, f) - y).abs() < 1e-2, "frame {f}");
+        }
+        assert!((scale(&m, &base, 8.0).1 - 40.0).abs() < 1e-3, "twice as wide, half as tall");
+        // Cutting the span keeps what shows on both sides.
+        let tail = m.split_at(&props, 10);
+        let tail_base = m.apply(&base, 10.0);
+        for f in 10..=16 {
+            let (a, b) = (scale(&m, &base, f as f32), scale(&tail, &tail_base, (f - 10) as f32));
+            assert!((a.0 - b.0).abs() < 1e-2 && (a.1 - b.1).abs() < 1e-2, "frame {f}: {a:?} vs {b:?}");
+        }
+        // Y keyed too: both curves are the user's, nothing is derived.
+        m.tracks.push(track(Property::ScaleY, &[(0, 80.0, Easing::Linear), (16, 80.0, Easing::Linear)]));
+        assert!(!m.is_derived(Property::ScaleY));
+        assert!((scale(&m, &base, 8.0).1 - 80.0).abs() < 1e-3);
+        // A driver through zero or a flip never divides by zero.
+        m.tracks = vec![track(Property::ScaleX, &[(0, 100.0, Easing::Linear), (10, -100.0, Easing::Linear)])];
+        for f in 0..=10 {
+            assert!(m.apply(&base, f as f32).transform.is_finite(), "frame {f}");
+        }
     }
 
     #[test]
@@ -1962,7 +2166,7 @@ mod tests {
     /// A movie clip instance with `filters`, at (x, 0).
     fn clip(x: f32, filters: Vec<crate::Filter>) -> Element {
         Element {
-            kind: ElementKind::Symbol { symbol: crate::SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: filters.into_iter().map(crate::FilterEntry::from).collect(), events: Vec::new() },
+            kind: ElementKind::Symbol { symbol: crate::SymbolId(1), loop_mode: Default::default(), first_frame: 0, blend: Default::default(), filters: filters.into_iter().map(crate::FilterEntry::from).collect(), events: Vec::new(), pivot: None },
             ..el(1, x, 0.0)
         }
     }

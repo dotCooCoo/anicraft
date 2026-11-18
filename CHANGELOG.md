@@ -2,6 +2,294 @@
 
 ## Unreleased
 
+* **Themes of your own** (#340, ADR 0117, M8): a theme is a small JSON file that names colours
+  for the interface's roles, kept in `themes` in the settings folder (`data/themes` in a
+  portable copy).
+  * **Preferences › Appearance › Theme** lists your themes under the built-in ones and applies
+    one as soon as you click it. **Export Current Theme** writes the look in use as a file to
+    start from, **Open Themes Folder** shows where they are, and **Reload** reads them again, so
+    an edit shows at once without restarting or rebuilding.
+  * **A theme that would be hard to read is not used.** Contrast is measured for every pair of
+    colours drawn together: text needs 4.5:1 and icons and the focus ring 3:1 (WCAG AA). A theme
+    that falls short, names a role that doesn't exist or has a colour that can't be read is
+    refused whole, never applied in part, and says what to change, such as "text_dim on panel
+    has a contrast of 2.47:1; it needs 4.5:1".
+  * **Colour in icons and accent gradients**, from the theme: `icon_accent` fills an icon's
+    closed shapes under its outline, and `accent_end` turns the accent bars beside panel titles
+    and under the active tab into a gradient. The built-in themes are unchanged.
+  * `anicraft --check-theme <file>` checks a theme without opening a window, and
+    `anicraft --theme <file>.json` uses one for a single run.
+
+* **Convert Audio to Keyframes and Auto Lip-Sync say when a sound can drift** (ADR 0114
+  follow-up, M8): with a sound whose sync is Event or Start, the dialog notes that the keys
+  can drift from what is heard after a jump on the timeline, and that Stream keeps them locked.
+
+* **Convert Audio to Keyframes and Auto Lip-Sync** (ADR 0114, #332, M5).
+  * **Convert Audio to Keyframes** (Modify › Timeline, or **To Keyframes…** in a sound
+    keyframe's Properties): the sound's loudness on each frame drives an object on another
+    layer. Pick its **scale**, **alpha**, **X** or **Y offset**, **rotation**, or a graphic
+    symbol's **first frame**, and the value in silence and at the loudest frame. **Threshold**
+    ignores background noise, **Smoothing** calms the movement without moving the beat,
+    **Key every** animates on twos or threes, and stereo sounds can be measured by channel. The
+    keys are written as **keyframes**, or as a **motion tween's property curve** that the
+    Motion Editor shows.
+  * **Auto Lip-Sync** (Modify › Timeline, or **Lip Sync…** beside Looping for a graphic
+    instance): speech picks the frame of a graphic symbol of mouth poses for every frame, from
+    five mouth shapes (rest, open, wide, round, closed). Mouths are found by the symbol's frame
+    labels, as the Lip-sync mouth chart template names them, and can be changed. It listens to
+    where each frame's energy lies, with no speech recognition and nothing sent anywhere; it
+    is a first pass to polish by hand.
+  * **Everything previews live**: a graph of the sound's loudness with the threshold, the
+    value the keys follow and where each key lands (or a row per mouth), and the keys
+    themselves on the stage and the timeline. OK is one undo step; Cancel leaves nothing.
+  * Headless: `sound.to_keyframes`, `sound.lip_sync` and `sound.analyse` (levels or mouth
+    shapes per frame), in `anicraft-cli`, MCP and plug-ins. The same sound always gives the
+    same keys.
+  * Fixed: a test of the graphics-failure handling could fail at random when another test was
+    running the app at the same moment; it no longer shares state with them.
+* **Pen tool improvements** (fixes #319, ADR 0115, M1): the Pen now does what Animate's does
+  on the point you just placed and on paths you drew earlier.
+  * **Click the last point** to make it a corner, so the next segment leaves it sharp; click
+    it again, double-click, or press Enter or Esc to finish. **Drag from it** for a new
+    handle. **Alt-drag it** to draw its curve again, with the old curve in view until you
+    let go.
+  * **Shift** keeps new points and handles on steps of 45°, and the segment your next click
+    would add is previewed as it will curve.
+  * **On a selected path**: click a smooth point to make it a corner and a corner to delete
+    it, click the outline to add a point, and click an open end to carry on drawing the same
+    path (its other end closes it). **Ctrl-click** (⌘) selects a path with the Pen.
+  * A mark beside the pointer says what a click will do: plus, minus, caret, ring, slash or
+    square.
+  * Headless, CLI and MCP: `path.extend` continues an open path from either end.
+  * Not yet: continuing a merged line as the same stroke, and real pen cursors.
+* **Keep area for squash and stretch** (fixes #408, ADR 0115, M1): a **Keep area** checkbox
+  on classic, shape and motion tweens (Properties › Frame, and the Motion Editor). The tween
+  scales width and height geometrically, so a squash from 100 × 100 % to 200 × 50 % passes
+  through 141 × 71 % and keeps its area on every frame, where it used to bulge by 12.5 %.
+  * On a motion tween, stretch one direction and the other follows by itself; the Motion
+    Editor draws the curve it follows. Key it yourself at any time.
+  * Off by default and per tween. Tweens without it, and older files, play exactly as before.
+  * Every export shows it. Headless, CLI and MCP: `timeline.set_keep_area`.
+
+* **Layer parenting** (fixes #388, ADR 0113, M7): a layer can follow another layer, as in
+  Animate, so a forearm moves with the upper arm while each keeps its own tweens.
+  * **Parenting view** in the timeline: the tree button beside **Layers** (or View › Parenting
+    View) shows a dot for every layer. Drag from a layer's dot to the layer it should follow;
+    a line joins them and chains step in like a tree. Click a dot, or right-click a layer and
+    choose **Parent**, to pick the parent from a menu or choose **No Parent**. Modify ›
+    Timeline › Remove Parent. The dots work from the keyboard and with screen readers.
+  * **The layer stays where it is** when you parent, re-parent or unparent it, in one undo
+    step. Deleting a parent layer leaves its followers in place.
+  * It follows the first object on the parent layer at every frame: position, rotation, scale
+    and skew, through tweens, motion guides and bones. Not colour effects, filters, opacity or
+    visibility. Chains can be as long as you need; a layer can't follow its own follower.
+  * You edit a parented layer on the stage as always: moving, transforming, typing a position
+    and drawing all go where you put them.
+  * The stage, Test Movie and every export show the same thing; the camera, layer depth, masks
+    and folders work as before. Files without parenting are unchanged.
+  * Headless, CLI and MCP: `layer.set_parent`, `layer.remove_parent`, `layer.parents`, and
+    `file.new_sample {"which": "arm"}` for an arm of three parented layers.
+  * Not yet: changing the parent part-way through the timeline; Edit Multiple Frames and
+    motion path editing in stage space on a follower; importing parenting from Animate files
+    (the format isn't publicly described).
+* **Several documents open at once, each in a tab** (ADR 0112, #420, M8).
+  * **Document tabs** below the menu bar: the file's name, a dot while it has unsaved
+    changes, and a × to close it. Click a tab to show its document, middle-click to close it,
+    drag it to reorder, right-click for Close, Close Others, Close All and showing the file
+    in your file manager. **Ctrl+Tab** / **Ctrl+Shift+Tab** and **Ctrl+PageDown** /
+    **Ctrl+PageUp** switch; **File › Close** (**Ctrl+W**) and **Close All** (**Ctrl+Alt+W**)
+    as in Animate; the Window menu lists the open documents.
+  * **Each document is its own**: undo history, selection, playhead, zoom and pan, timeline
+    scroll, Library and Motion Editor state are kept per tab; tools, colours and the panel
+    layout stay as they are.
+  * **New, Open, recent files, dropped files and restored copies open in a new tab**, so
+    opening a document no longer asks about (or replaces) the one you were in. A file that is
+    already open is shown instead. The untouched sample makes way for the first document.
+  * **Unsaved changes**: closing a tab asks about that document; quitting asks once and
+    lists every unsaved document, with Save All.
+  * **Autosave and crash recovery** keep one copy per open document and restore each into
+    its own tab.
+  * **Copy and paste between documents** brings the symbols, images and sounds the artwork
+    uses into the other Library, renamed when a name is taken ("Ball 2"); pasting again reuses
+    them. Before, a pasted instance could show a different symbol that happened to have the
+    same id, and images didn't come at all.
+  * Screen readers get a tab list of the open documents. A document that isn't shown keeps no
+    render caches.
+
+* **Lines are drawn once, with no darker edges where their pieces overlapped** (ADR 0110, M3).
+  A line used to be filled as many small overlapping pieces, and pixels on its edge where two
+  pieces met came out up to half a pixel too dark: along wide curves, at round corners and
+  ends, where dashes' round ends ran together, and as dark knots at the corners of outlined
+  rectangles at small sizes. A line is now filled as one outline, on the stage (GPU and CPU)
+  and in every render and export of pixels, so it looks the same as the fill Convert Lines to
+  Fills makes from it: identical with corners, flat or square ends and dashes on straight
+  runs, and within the renderer's 0.1 px flattening on curves and round ends.
+  * A see-through line that crosses itself, folds back, or has overlapping dashes is covered
+    once everywhere, as before, and now also exactly at the edges of the overlap.
+  * SVG and HTML exports of variable-width lines write one clean outline instead of hundreds
+    of overlapping pieces.
+  * Render time is unchanged for ordinary outlined artwork (2,000 outlined shapes at 1080p:
+    9.3 to 9.0 ms; the renderers get 3 to 4 times fewer edges) and 4 to 8 % more for scenes
+    made only of lines that cross themselves.
+* **The transformation point, a box that turns with the object, and layer opacity, from user
+  reports** (ADR 0111, M1).
+  * **Move the transformation point** (#302, #280, #178, #183): with Free Transform, drag the
+    white circle to where the object should turn; it snaps to the box's corners, sides and
+    centre (Alt places it freely) and can sit outside the box. Double-click it to centre it
+    again. Rotating turns about it, and Alt scales and skews about it.
+  * **A symbol instance keeps its point**: it is saved with the instance and used by Free
+    Transform, Rotate 90° and Flip, the Scale and Rotation fields in Properties, and classic
+    and motion tweens, so an arm keyed at two angles swings from its shoulder. Properties
+    shows it as **Pivot** with **Reset**; Modify › Transform › Reset Transformation Point.
+    Shapes, groups, text and several objects have a point while they stay selected with Free
+    Transform. Files and tweens made before this are unchanged.
+  * **The box turns with the object** (#175): one selected object shows its own box, turned,
+    scaled and skewed as it is, and its handles stretch it along its own sides.
+  * **Layer opacity** (#279): 0 to 100 % in Layer Properties and in the layer's right-click
+    menu, shown beside the layer's name. The layer fades as one (overlapping shapes don't show
+    through each other), a folder fades the layers in it, and it is in the movie: the stage,
+    Test Movie and every export.
+  * Headless, CLI and MCP: `modify.transformation_point`, `modify.reset_transformation_point`,
+    `layer.set_opacity`, and `opacity` on `layer.set_properties` and `layer.properties`.
+  * Changed: with Free Transform, a press on the very centre of the box now takes the
+    transformation point; drag anywhere else inside the box to move the object.
+
+* **Fixes from your reports: drawing, selection, transform and the timeline** (M1, ADR 0108).
+  * **Fixed: a drawing could vanish under a new brush stroke** (fixes #308). Where a stroke
+    crossed an older one at a shallow angle, the merge could lose the older fill, sometimes
+    the whole drawing. Such a merge is now refused and the new stroke stays whole on top, so
+    nothing drawn is lost.
+  * **Pasted merge-drawing shapes float** (fixes #391): Paste in Center and Paste in Place leave
+    them whole and selected, as in Animate, so a copy can be dragged off its original. They
+    join the drawing when deselected or let go after a move; Undo takes the paste back in one
+    step.
+  * **Paste takes a picture copied in another app** (fixes #263): a paint program's pixels or a
+    screenshot lands in the middle of the view as a bitmap, from the menu and with
+    **Ctrl+V**. Desktop app only; vectors from other apps are not read yet.
+  * **Timeline**: with several frames selected, **F6** and **F7** key every frame of the range,
+    not only the first (fixes #272). Selected keyframes show a hand pointer and drag away, a
+    press on the left of a keyframe no longer resizes the span before it, and a drag from an
+    unselected keyframe says how to move one (fixes #344). F7 on a keyframe keeps its drawing
+    and makes the blank keyframe on the next frame (fixes #372, already in 0.3.0).
+  * **Fill and Stroke in Properties**: turning a fill off and on brings back its colour or
+    gradient instead of white (fixes #292); with only an outline selected, Fill fills what it
+    surrounds (fixes #291); Stroke has a checkbox too, and the width stops at a hairline (0.1)
+    instead of removing the stroke (fixes #393).
+  * **Free Transform shows a rotate cursor** just outside the corners (fixes #194), so the
+    rotate zone can be found.
+  * **A relaxed double-click counts** (fixes #192): two clicks up to half a second apart are a
+    double-click, as on the desktop; before, selecting a fill with its outline often took
+    several tries.
+  * **A dragged edge bends into an even arc** wherever it is grabbed (fixes #186), instead of
+    bulging beside the pointer.
+  * **Resizing the Timeline or a dock keeps the artwork where it is on screen** (fixes #423;
+    after Call4han's #424). A view still as Fit in Window left it goes on fitting.
+  * **Selection dots hide behind masked artwork** only where its mask shows it (after
+    Untoldent's follow-up to #404), at the same speed.
+  * Checked and kept fixed with tests: a flipped symbol or image is no longer squashed by the
+    Properties panel, and undoes (fixes #310, #371); Break Apart works on an imported image
+    and a second time on text (fixes #341, #299).
+
+* **Modify › Shape, the colour picker's eyedropper and transformation origins, from user
+  reports** (ADR 0109, M1).
+  * **Convert Lines to Fills** (#179): each selected line becomes a fill of its exact outline
+    in the line's colour, with its caps, joins, dashes, dots and width profile. The outline is
+    made of curves, not flattened points: a straight line becomes four corners. In merged
+    drawing the fill joins the drawing; a drawing object keeps its fill and gets the outline
+    above it. Measured against what the renderer strokes: the same area to within a pixel.
+  * **Expand Fill…**: grow or inset the selected fills by a distance in stage pixels. Growing
+    rounds corners, insetting keeps them.
+  * **Soften Fill Edges…**: a soft edge of 1 to 50 bands of the fill's colour or gradient,
+    fainter outwards, added round the fill or taken from it.
+  * **The colour picker is an eyedropper** (#288): while any colour picker is open, click the
+    stage to take the colour drawn there, from gradients, bitmaps, lines and symbols alike; a
+    chip by the pointer shows it first, and Esc closes the picker without picking.
+  * **Transform about** (#296): with Free Transform, several selected objects turn, scale and
+    skew as one arrangement (as before), each about its own registration point, or each about
+    its own centre. The stage marks each point; Rotate 90° and Flip follow the choice; Modify ›
+    Transform › Next Transformation Origin can be given a key.
+  * Headless, CLI and MCP: `modify.lines_to_fills`, `modify.expand_fill`,
+    `modify.soften_fill_edges`, `paint.sample`, `modify.transform_origin`, and `origin` on
+    `modify.transform`, `modify.rotate_cw/ccw` and `modify.flip_h/v`.
+  * Fixed: zoomed in past about 2000 % on a wide dashed or tapering curved line, a stray disc
+    could appear on the line.
+
+* **Requests from the issue tracker: layers by drag, all-layer buttons, sizes and more** (M8).
+  * **Drag a layer to reorder it** (#407, and part of #241 and #331): drag a layer by its name;
+    a line shows where it lands, a folder lights up when the layer goes inside it, **Esc**
+    cancels. Folders, masks and guides move with everything in them, a drop is one undo step,
+    and the list scrolls when the drag nears its top or bottom. Headless: `layer.move {layer?,
+    before | after | into}`. The up and down buttons and menu items stay for the keyboard.
+  * **The eye, padlock and outline square above the layer names** show, lock or outline every
+    layer at once, as in Animate (#422); `all: true` (and `on`) on `layer.toggle_visible`,
+    `layer.toggle_lock` and `layer.toggle_outline`. The camera layer is left alone.
+  * **The line between the layer names and the frames drags** (#384), from 150 to 600 points;
+    double-click it to put it back. The width is kept in the preferences.
+  * **Symbol types are listed as Movie clip, Button, Graphic**, and Convert to Symbol offers a
+    movie clip the first time, as Animate does (#419). The `modify.convert_to_symbol` command's
+    own default is still a graphic, so scripts make what they made.
+  * **Size in Properties** (#294): the selection's width and height in stage pixels; a new
+    value stretches it from its top-left corner.
+  * **The Brush and the Paint Brush keep their settings between sessions** (#331): size, tip,
+    smoothing, pressure, taper and texture, each tool its own.
+* **Fixed: start-up, graphics and opening Flash files, from user reports** (ADR 0105, M8).
+  * Fixed: most `.fla` files saved by Flash CS5 to Animate were refused with "the archive is
+    damaged: the central directory is outside the archive" (#356, #385). Flash writes the
+    archive's closing record with the file list's size 54 bytes too large whenever `mimetype`
+    isn't the first file; AniCraft now reads those as Animate does. Archives that really are
+    damaged are still refused.
+  * Fixed: the cause of AniCraft closing as it opened or when its window was resized (#264,
+    #309, and most "won't open" reports: #421, #412, #313, #286, #285, #268, #164). The stage
+    handed its drawing to the graphics card while the window was setting itself up, which the
+    graphics library refuses ("Failed to wait for GPU to come idle before reconfiguring the
+    Surface"). 0.2.1 closed on that error; later builds survived it with a skipped frame and a
+    line about the graphics driver. Now it doesn't happen: stage drawing is handed over only
+    while a frame is being drawn. Measured: the error in 3 of 20 starts before, 0 of 20 after.
+  * Fixed: on a computer whose graphics driver crashes AniCraft as it starts, AniCraft opened
+    only every second time (#335). The way of drawing the window that crashed now stays last for
+    the next five starts, then gets one more chance, and is held back longer each time it fails
+    again (25, then 100 starts). `--renderer` still tries what you ask for first.
+  * Fixed: on Linux, after **Add to Applications Menu**, the menu and dock could keep showing a
+    generic icon when another installer had left an icon cache in `~/.local/share/icons`
+    (#348). The cache is brought up to date.
+  * The web version keeps fewer drawn frames in memory: 256 MB at most instead of 768 MB (#314:
+    900 MB for a short animation). The desktop is unchanged; idle, it uses no CPU.
+
+* **Fixes and polish from outside contributors** (M8). Thank you all.
+  * **Fixed: no menus on macOS** (fixes #187, #247, #398; Oskar Raszkiewicz). The window keeps
+    the standard macOS title bar and the menu row sits under it; before, the title bar covered
+    File, Edit and the rest unless the window was full screen (ADR 0006).
+  * **Fixed: Ctrl+C, Ctrl+X, Ctrl+V and Ctrl+Shift+V did nothing on the stage** on desktop builds
+    (fixes #197; jayzed80). They copy, cut, paste and paste in place again; text fields keep
+    their own copy and paste.
+  * **Fixed: grouped artwork in Animate documents came in scaled and moved twice** (fixes #411;
+    Vincent Agerbech, with the nested-group test from NetterSilver). A 50% instance in a group
+    drew at 25%; group members now land where Animate puts them.
+  * **Selected raw artwork is easier to read** (fixes #295; Untoldent): finer, staggered dots in
+    a colour that contrasts with each fill, stroke or gradient instead of blue and white ones,
+    thin selected lines stay visible, and artwork on top hides the dots under it.
+  * **Raw drawings act as one shape** (scks1): Align and Distribute keep a fill and its outline
+    together (fixes #301), Rotation and Scale in Properties turn and scale a selected raw
+    drawing about its centre (fixes #297), and changing the stroke of a whole raw drawing no
+    longer gives its fills a second outline (the doubled stroke of #389).
+  * **A group's registration point is the centre of what was grouped** (Koolskull, ADR 0073),
+    not the corner of the stage, so Rotation and Scale in Properties turn it about itself. The
+    artwork stays where it was; edit the group to move the point.
+  * **Edit bar** (Untoldent, gmrmad1): inside a symbol, group or drawing object, one click on the
+    scene name goes back to the scene and the arrow beside it opens the scene menu (fixes #353);
+    scene rows in that menu are clickable across their whole width; Insert › Scene is now
+    **New Scene**. The zoom percentage is a field you can type in, with its presets on the
+    arrow beside it (fixes #43).
+  * **Properties › Scale has a lock** (fixes #304; gmrmad1): with it on, changing one of width
+    or height changes the other in proportion.
+  * **Names are selected when a dialog opens** (fixes #196, #322; Untoldent): Convert to Symbol,
+    Rename Layer, Rename Scene, Layer Properties and the other name prompts, so typing replaces
+    the name.
+  * **Timeline** (gmrmad1): dragging the playhead on the ruler stops at the last frame that has
+    material (fixes #352), and a playhead past the end of a scene no longer shows the next
+    scene's artwork on the stage (fixes #305).
+  * **Camera** (Kushagra Kumar): with the camera layer hidden, Preview Through Camera no longer
+    blocks drawing on the stage (fixes #126).
 * **From outside contributors** (M8; thank you).
   * **Free Transform skews** (by mypenc, #176, for #174). Drag the line between two handles
     of the selection box to shear the artwork along that edge, as in Animate: the opposite edge

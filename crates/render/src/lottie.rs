@@ -1279,6 +1279,29 @@ mod tests {
     }
 
     #[test]
+    fn a_tween_that_keeps_area_is_baked_frame_by_frame() {
+        // ADR 0115: no cubic ease draws a geometric scale curve, so the check of ADR 0089
+        // refuses eased keys and the export holds every frame's own scale: the area a Lottie
+        // player shows is the one `evaluate` gives, on every frame.
+        use anicraft_doc::Easing;
+        use std::sync::Arc;
+        let mut doc = tweened(Affine::translate(50.0, 60.0), Affine::translate(50.0, 60.0).mul(&Affine::scale(2.0, 0.5)), Easing::Linear, false);
+        let l = Arc::make_mut(&mut doc.timeline_mut(0).layers[0]);
+        Arc::make_mut(&mut l.keyframes[0]).tween.as_mut().unwrap().keep_area = true;
+        let e = to_lottie(&doc, "squash", 0, 14, false);
+        let v = parse(&e);
+        let it = items(&v, 0);
+        let s = keys_of(&it.last().unwrap()["s"]);
+        assert!(s.len() >= 10, "a key a frame: {}", s.len());
+        for f in 0..=14 {
+            let got = crate::lottie_keys::value_at(&s, f64::from(f)).unwrap();
+            let want = evaluate(&doc, f).items[0].transform.decompose();
+            assert!((got[0] - f64::from(want.sx) * 100.0).abs() < 2e-2 && (got[1] - f64::from(want.sy) * 100.0).abs() < 2e-2, "frame {f}: {got:?} vs {want:?}");
+            assert!((got[0] * got[1] - 10_000.0).abs() < 5.0, "frame {f}: the area stays ({got:?})");
+        }
+    }
+
+    #[test]
     fn turning_and_growing_are_transform_keys() {
         use anicraft_doc::Easing;
         let a = Affine::translate(50.0, 60.0);

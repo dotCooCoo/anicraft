@@ -70,7 +70,7 @@ pub fn port(app: &App) -> Option<u16> {
 
 /// Whether the person is in the middle of an edit a remote one must not join.
 fn person_is_dragging(app: &App, ctx: &egui::Context) -> bool {
-    app.drag != Drag::None || app.plugin_dialog.is_some() || (app.s.in_gesture() && ctx.egui_is_using_pointer())
+    app.drag != Drag::None || app.plugin_dialog.is_some() || app.audio_keys.is_some() || (app.s.in_gesture() && ctx.egui_is_using_pointer())
 }
 
 /// Runs the waiting calls: at the start of a frame, so their edits draw in this one.
