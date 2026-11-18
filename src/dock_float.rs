@@ -112,7 +112,7 @@ fn inside(app: &mut App, ctx: &egui::Context, f: &Float, layout: &Layout, acts: 
     let title = crate::i18n::t(p.label());
     let mut open = true;
     let size = vec2(f.size[0], f.size[1]);
-    let mut w = egui::Window::new(title).id(id).open(&mut open).collapsible(false).resizable(true).default_size(size).min_size([crate::dock::MIN_FLOAT, 120.0]);
+    let mut w = crate::windows::new(ctx, title).id(id).open(&mut open).collapsible(false).resizable(true).default_size(size).min_size([crate::dock::MIN_FLOAT, 120.0]);
     let at = f.at.map_or_else(|| ctx.content_rect().center() - size * 0.5, |a| pos2(a[0], a[1]));
     w = if app.dock_view.placed.insert(f.id) { w.current_pos(at) } else { w.default_pos(at) };
     let shown = w.show(ctx, |ui| {

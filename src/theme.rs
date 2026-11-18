@@ -512,9 +512,46 @@ pub fn stage_text_font(size: f32) -> egui::FontId {
     egui::FontId::proportional(size.clamp(12.0, 64.0))
 }
 
+/// The editor's face for a run of stage text at `size` screen pixels (within what the editor
+/// can show legibly).
+pub fn stage_text_run_font(size: f32) -> egui::FontId {
+    egui::FontId::proportional(if size.is_finite() { size.clamp(6.0, 96.0) } else { 14.0 })
+}
+
+/// A run's own colour (document data) as the editor shows it, at least faintly visible.
+pub fn stage_text_colour(c: anicraft_engine::doc::Rgba) -> Color32 {
+    let b = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Color32::from_rgba_unmultiplied(b(c.r), b(c.g), b(c.b), b(c.a.max(0.25)))
+}
+
 /// The typefaces embedded at build time (Inter, JetBrains Mono), for text on the stage.
 pub fn embedded_fonts() -> Vec<std::sync::Arc<[u8]>> {
     [craft_fonts::UI_FONT, craft_fonts::MONO_FONT].into_iter().flatten().map(std::sync::Arc::from).collect()
+}
+
+/// Noto Sans Georgian (craft-fonts `Geor`) when this build embedded a face that parses and covers
+/// the Georgian letters. The
+/// interface offers Georgian only then (`i18n::ready_codes`), and `install_fonts` loads the same
+/// face: epaint panics on bytes it cannot parse, so a damaged file must never reach it.
+pub fn georgian_font() -> Option<&'static [u8]> {
+    static FACE: std::sync::OnceLock<Option<&'static [u8]>> = std::sync::OnceLock::new();
+    *FACE.get_or_init(|| craft_fonts::GEORGIAN_FONT.filter(|b| parses_as_font(b)))
+}
+
+/// Whether `bytes` is a font file that draws every Georgian letter (U+10D0..U+10FA).
+fn parses_as_font(bytes: &[u8]) -> bool {
+    let letters: String = ('\u{10D0}'..='\u{10FA}').collect();
+    let fonts = anicraft_engine::text::Fonts::from_faces([bytes.to_vec()]);
+    fonts.layout(&letters, &anicraft_engine::text::Style::default()).is_ok_and(|laid| laid.missing == 0)
+}
+
+#[cfg(test)]
+mod georgian_face_tests {
+    #[test]
+    fn garbage_bytes_are_not_a_font() {
+        assert!(!super::parses_as_font(b"not a font file at all"));
+        assert!(!super::parses_as_font(&[]));
+    }
 }
 
 /// Which typefaces are active (for About and diagnostics), in the interface language.
@@ -532,7 +569,8 @@ pub type UserFont = (String, Vec<u8>, u32);
 
 /// Installs the UI typefaces (ADR 0005). Order in each family: the user's system font (from
 /// Preferences), then the craft-fonts pair (when embedded at build time), then egui's bundled
-/// fonts, which stay as fallbacks for glyph coverage.
+/// fonts, which stay as fallbacks for glyph coverage, then Noto Sans Georgian (when embedded)
+/// for the letters none of them has.
 pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font: Option<&UserFont>) {
     use egui::{FontData, FontDefinitions, FontFamily};
     use std::sync::Arc;
@@ -541,6 +579,12 @@ pub fn install_fonts(ctx: &egui::Context, ui_font: Option<&UserFont>, data_font:
         if let Some(b) = bytes {
             defs.font_data.insert(name.to_owned(), Arc::new(FontData::from_static(b)));
             defs.families.entry(family).or_default().insert(0, name.to_owned());
+        }
+    }
+    if let Some(b) = georgian_font() {
+        defs.font_data.insert("craft-noto-sans-georgian".to_owned(), Arc::new(FontData::from_static(b)));
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            defs.families.entry(family).or_default().push("craft-noto-sans-georgian".to_owned());
         }
     }
     for (user, family) in [(ui_font, FontFamily::Proportional), (data_font, FontFamily::Monospace)] {

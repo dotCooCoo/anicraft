@@ -586,7 +586,10 @@ impl<'a> Builder<'a> {
     }
 
     /// A text field: one text element per block (`text::field`), placed by the field's matrix.
+    /// Its filters (the same `<filters>` records an instance holds) come in on each block, in
+    /// order, switched off where Animate had them off (ADR 0099).
     fn text_field(&mut self, el: &X, parent: &Affine, out: &mut Vec<Arc<Element>>) {
+        let filters = self.filters(el);
         let fonts: &'a Fonts = match self.fonts {
             Some(f) => f,
             None => Fonts::get(),
@@ -595,7 +598,8 @@ impl<'a> Builder<'a> {
         let m = parent.mul(&matrix(el));
         let name: String = el.attr("name").unwrap_or("").chars().take(256).collect();
         for (i, p) in crate::text::field(el, fonts, &mut self.faces, &mut self.report).into_iter().enumerate() {
-            let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m.mul(&Affine::translate(p.offset.x, p.offset.y)), color: ColorEffect::default(), kind: ElementKind::Text(Arc::new(p.block)) };
+            let block = anicraft_doc::TextBlock { filters: filters.clone(), ..p.block };
+            let mut e = Element { id: ElementId(self.doc.alloc_id()), name: String::new(), transform: m.mul(&Affine::translate(p.offset.x, p.offset.y)), color: ColorEffect::default(), kind: ElementKind::Text(Arc::new(block)) };
             // A dynamic or input field's instance name goes on it (its first block for static
             // text, which keeps the name for a later conversion).
             if i == 0 {

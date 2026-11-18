@@ -412,6 +412,34 @@ pub fn recovery_dir() -> Option<PathBuf> {
     }
 }
 
+/// Writes a file only this user may read (the control port's token, ADR 0104), making its folder
+/// first. On Windows the settings folder (%APPDATA%) is already private to the user; elsewhere
+/// the file is made owner-only (0600). The file is always a new one: an older file (or a link
+/// someone left under its name) is removed first, never written through, and the new file is
+/// made exclusively, so it has this mode from the start.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_private_file(path: &std::path::Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut f = options.open(path)?;
+    f.write_all(contents)?;
+    f.sync_all()
+}
+
 /// Whether the recovery folder was chosen explicitly (screenshot runs only touch it then).
 pub fn recovery_dir_overridden() -> bool {
     std::env::var_os("ANICRAFT_RECOVERY_DIR").is_some_and(|v| !v.is_empty())

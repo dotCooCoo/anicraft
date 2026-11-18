@@ -23,9 +23,9 @@ prints the version.
 
 Two rules hold everywhere:
 
-* Each subcommand takes a document path, or `--sample` for the built-in sample animation. The
-  positional document must be a `.anicraft` file (to work on an Animate file, see
-  [Converting Animate files](#converting-animate-files)).
+* Subcommands that open a document accept a `.anicraft` file, an Animate `.fla` or `.xfl`
+  file, an XFL folder, or `--sample` for the built-in sample animation. See
+  [Converting Animate files](#converting-animate-files) to save an import as `.anicraft`.
 * **Frame flags on the command line are 1-based**, as on the timeline: `--frame 1` is the first
   frame. Frame numbers inside JSON params are 0-based, as everywhere in the engine.
 
@@ -159,8 +159,13 @@ Renders are deterministic: the same document and flags give the same pixels on e
 
 ### Converting Animate files
 
-The positional document must be a `.anicraft` file, but the `file.open` command reads `.fla`,
-`.xfl` and XFL folders. Start from the sample, open the Animate file over it, and save:
+Pass a `.fla`, `.xfl` file or XFL folder directly to any subcommand that opens a document:
+
+```sh
+anicraft-cli info intro.fla
+```
+
+To save an import as `.anicraft` and print its import report, use `file.open` and `--save`:
 
 ```sh
 anicraft-cli exec --sample file.open '{"path":"intro.fla"}' --save intro.anicraft
@@ -260,7 +265,24 @@ Things to know:
 * The assistant reads and writes files with your permissions, at the paths it chooses. Only
   connect assistants you trust with those files.
 * The server works on its own copy of the document, not on the window you have open. Save from
-  the assistant, then open the file in AniCraft.
+  the assistant, then open the file in AniCraft. To have the assistant work in the window
+  instead, see the next section.
+
+### An assistant in the window you have open
+
+Start AniCraft with `anicraft --control 9878`, and give the assistant
+`anicraft-cli mcp --bridge 9878` as its server instead of `anicraft-cli mcp`. The same five
+tools then act on the document in front of you: each edit shows at once and undoes with
+**Ctrl+Z** like your own. While this is on, the status bar says **Remote control on (port
+9878)**.
+
+* Only programs on this computer, running as you, can connect: the port is not open to the
+  network, and each run has its own secret token, kept in the settings folder until AniCraft
+  closes.
+* An edit from the assistant waits while you are in the middle of a drag, so your undo steps
+  and its own never mix.
+* Commands that would lose work still need `"confirm": true`, as above.
+* Without `--control` nothing listens: remote control is off unless you start AniCraft this way.
 
 The full details are in
 [the MCP notes on GitHub](https://github.com/storytold/AniCraft/blob/main/docs/mcp.md).

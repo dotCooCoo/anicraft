@@ -387,6 +387,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     Some(XfKind::Scale { hx, hy }) if hx * hy < 0 => CursorIcon::ResizeNeSw,
                     Some(XfKind::Scale { hx: 0, .. }) => CursorIcon::ResizeVertical,
                     Some(XfKind::Scale { .. }) => CursorIcon::ResizeHorizontal,
+                    Some(XfKind::Skew { hy: 0, .. }) => CursorIcon::ResizeVertical,
+                    Some(XfKind::Skew { .. }) => CursorIcon::ResizeHorizontal,
                     Some(XfKind::Rotate) => CursorIcon::Alias,
                     Some(XfKind::Move) => CursorIcon::Move,
                     None => CursorIcon::Default,
@@ -670,7 +672,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
             Drag::Bend { .. } | Drag::RawPoint { .. } | Drag::RawHandle { .. } => end_raw_drag(app),
             Drag::Transform { .. } | Drag::SliceGuide { .. } | Drag::Points { .. } | Drag::Hint { .. } | Drag::MotionMove { .. } | Drag::CameraPan { .. } | Drag::CameraRotate { .. } | Drag::BonePose { .. } | Drag::ArmatureMove { .. } | Drag::WarpPin { .. } => app.s.end_gesture(),
-            Drag::Bone { from, head, cur } => crate::bone_tool::drag_end(app, xf, from, head, cur),
+            Drag::Bone { from, parent, head, cur } => crate::bone_tool::drag_end(app, xf, from, parent, head, cur),
             Drag::Guide { index, .. } => crate::rulers::drag_end(app, index, geo, ui.input(|i| i.pointer.latest_pos())),
             Drag::Width { .. } => crate::widthtool::drag_end(app),
             Drag::Gradient { .. } => crate::gradient_tool::drag_end(app),
@@ -753,7 +755,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 Tool::Text if !panning => {
                     commit_text(app);
                     if !open_text_at(app, sp, 3.0 / zoom.max(1e-3)) {
-                        app.text_edit = Some(crate::app::TextEditing { at: sp, element: None, text: String::new(), original: String::new(), focus: true });
+                        app.text_edit = Some(crate::app::TextEditing::new(sp, None, None, &app.s.text_style));
                     }
                 }
                 Tool::Bone if !panning => crate::bone_tool::click(app, xf, p),
@@ -1360,7 +1362,8 @@ fn xf_snap(s: &mut anicraft_engine::Session, ring: &mut Option<Vec2>, kind: XfKi
             let pts = [pos2(b[0], b[1]), pos2(b[2], b[1]), pos2(b[2], b[3]), pos2(b[0], b[3]), pos2((b[0] + b[2]) * 0.5, (b[1] + b[3]) * 0.5)];
             pts.into_iter().min_by(|p, q| p.distance(start).total_cmp(&q.distance(start))).unwrap_or(start)
         }
-        XfKind::Rotate => {
+        // Rotation and skew don't snap.
+        XfKind::Rotate | XfKind::Skew { .. } => {
             *ring = None;
             return c;
         }
@@ -1833,23 +1836,28 @@ mod pattern_tests {
 fn open_text_at(app: &mut App, sp: Pos2, tolerance: f32) -> bool {
     let Some((_, id)) = app.s.hit_test(to_v(sp), tolerance) else { return false };
     let found = app.s.visible_elements().into_iter().find(|e| e.id == id).and_then(|e| match &e.kind {
-        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(Vec2::ZERO), t.text.clone())),
+        anicraft_engine::doc::ElementKind::Text(t) => Some((e.transform.apply(Vec2::ZERO), t.clone())),
         _ => None,
     });
-    let Some((at, text)) = found else { return false };
+    let Some((at, block)) = found else { return false };
     app.run("element.select", json!({"ids": [id.0]}));
-    app.text_edit = Some(crate::app::TextEditing { at: pos2(at.x, at.y), element: Some(id), original: text.clone(), text, focus: true });
+    app.text_edit = Some(crate::app::TextEditing::new(pos2(at.x, at.y), Some(id), Some(&block), &app.s.text_style));
     true
 }
 
 /// Commits the text being typed: new text is created, edited text replaced (one undo step
-/// each); emptied text is deleted, and unchanged text commits nothing.
+/// each), with its styled runs (ADR 0085); emptied text is deleted, and unchanged text commits
+/// nothing.
 pub fn commit_text(app: &mut App) {
-    let Some(te) = app.text_edit.take() else { return };
+    let Some(mut te) = app.text_edit.take() else { return };
+    te.sync();
     match te.element {
         None if te.text.trim().is_empty() => {}
         None => {
-            app.run("text.create", json!({"text": te.text, "x": te.at.x, "y": te.at.y}));
+            let mut p = te.edit_params();
+            p["x"] = json!(te.at.x);
+            p["y"] = json!(te.at.y);
+            app.run("text.create", p);
         }
         Some(_) if te.text == te.original => {}
         Some(id) => {
@@ -1857,33 +1865,67 @@ pub fn commit_text(app: &mut App) {
             if te.text.trim().is_empty() {
                 app.run("edit.delete", json!({}));
             } else {
-                app.run("text.edit", json!({"text": te.text}));
+                app.run("text.edit", te.edit_params());
             }
         }
     }
 }
 
-/// The field text is typed in, over the stage at the text's top-left corner. Esc or a click
-/// elsewhere finishes; Enter starts a new line.
+/// The field text is typed in, over the stage at the text's top-left corner, each run shown in
+/// its own colour, size and style (ADR 0085). Esc or a click elsewhere finishes (a click in
+/// Properties' text styles keeps it open); Enter starts a new line.
 fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) {
+    let focused_id = egui::Id::new("stage_text_edit_field");
+    let had_focus = ui.ctx().memory(|m| m.has_focus(focused_id));
+    crate::rich_edit::watch_clipboard(app, ui.ctx(), had_focus);
+    let paper = crate::theme::stage_text_colour(anicraft_engine::doc::Rgba { a: 1.0, ..app.s.doc.stage.background });
+    let held = app.text_props_rect.zip(ui.ctx().input(|i| i.pointer.interact_pos())).is_some_and(|(r, p)| r.contains(p)) || egui::Popup::is_any_open(ui.ctx());
+    // As wide as the block being edited (at the zoom), so its lines break as they do.
+    let block_w = app.text_edit.as_ref().and_then(|te| te.element).and_then(|id| app.s.visible_elements().into_iter().find(|e| e.id == id)).and_then(|e| match &e.kind {
+        anicraft_engine::doc::ElementKind::Text(t) => Some(t.width.unwrap_or(t.box_width)),
+        _ => None,
+    });
     let Some(te) = app.text_edit.as_mut() else { return };
     let at = stage_origin + vec2(te.at.x * zoom, te.at.y * zoom);
-    let size = (app.s.text_style.size * zoom).clamp(12.0, 64.0);
+    let size = (rt_size(te) * zoom).clamp(12.0, 64.0);
+    let width = 260.0f32.max(size * 8.0).max(block_w.unwrap_or(0.0) * zoom + 8.0).min(4000.0);
     let mut done = false;
+    let (runs, last) = (te.runs.clone(), te.last.clone());
     egui::Area::new(egui::Id::new("stage_text_edit")).fixed_pos(at).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
-        egui::Frame::new().fill(T.panel).stroke(Stroke::new(1.0, T.selection)).inner_margin(4.0).show(ui, |ui| {
-            let r = ui.add(egui::TextEdit::multiline(&mut te.text).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(260.0f32.max(size * 8.0)).hint_text(tr!("Type text"))).named(tr!("Text on the stage"));
+        egui::Frame::new().fill(paper).stroke(Stroke::new(1.0, T.selection)).inner_margin(4.0).show(ui, |ui| {
+            let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+                let job = crate::rich_edit::layout_job(&runs, &last, buf.as_str(), zoom, wrap);
+                ui.fonts_mut(|f| f.layout_job(job))
+            };
+            let r = ui
+                .add(egui::TextEdit::multiline(&mut te.text).id(focused_id).font(crate::theme::stage_text_font(size)).desired_rows(1).desired_width(width).background_color(paper).hint_text(tr!("Type text")).layouter(&mut layouter))
+                .named(tr!("Text on the stage"));
+            if let Some(range) = egui::text_edit::TextEditState::load(ui.ctx(), r.id).and_then(|s| s.cursor.char_range()) {
+                te.sel = (range.secondary.index.0 as u32, range.primary.index.0 as u32);
+            }
             if te.focus {
+                // Back in the editor (after a style was picked): the selection as it was.
+                if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), r.id) {
+                    let (a, b) = te.sel;
+                    state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(a as usize), egui::text::CCursor::new(b as usize))));
+                    state.store(ui.ctx(), r.id);
+                }
                 r.request_focus();
                 te.focus = false;
-            } else if r.lost_focus() {
+            } else if r.lost_focus() && !held {
                 done = true;
             }
         });
     });
+    te.sync();
     if done {
         commit_text(app);
     }
+}
+
+/// The size the editor's caret line is shown at: the run at the caret's.
+fn rt_size(te: &crate::app::TextEditing) -> f32 {
+    anicraft_engine::doc::rich_text::style_at(&te.runs, te.sel.1).size
 }
 
 // ----- free transform ---------------------------------------------------------------------------
@@ -1891,6 +1933,8 @@ fn text_editor(app: &mut App, ui: &mut egui::Ui, stage_origin: Pos2, zoom: f32) 
 /// Screen-space handle size and the rotation zone just outside each corner.
 const HANDLE: f32 = 8.0;
 const ROTATE_ZONE: f32 = 22.0;
+/// How far from a box edge line (screen space) a press still grabs it to skew.
+const SKEW_ZONE: f32 = 5.0;
 
 fn bounds_arr(b: anicraft_engine::geom::Rect) -> Option<[f32; 4]> {
     (!b.is_empty()).then_some([b.min.x, b.min.y, b.max.x, b.max.y])
@@ -1907,6 +1951,19 @@ fn xf_zone(r: Rect, p: Pos2) -> Option<XfKind> {
     for (h, hx, hy) in handles(r) {
         if (p.x - h.x).abs() <= HANDLE && (p.y - h.y).abs() <= HANDLE {
             return Some(XfKind::Scale { hx, hy });
+        }
+    }
+    // The line between two handles skews (Animate parity, #174); the handles above win at the ends.
+    let near = |a: f32, b: f32| (a - b).abs() <= SKEW_ZONE;
+    if (r.left() - SKEW_ZONE..=r.right() + SKEW_ZONE).contains(&p.x) && (r.top() - SKEW_ZONE..=r.bottom() + SKEW_ZONE).contains(&p.y) {
+        if near(p.y, r.top()) {
+            return Some(XfKind::Skew { hx: 0, hy: -1 });
+        } else if near(p.y, r.bottom()) {
+            return Some(XfKind::Skew { hx: 0, hy: 1 });
+        } else if near(p.x, r.left()) {
+            return Some(XfKind::Skew { hx: -1, hy: 0 });
+        } else if near(p.x, r.right()) {
+            return Some(XfKind::Skew { hx: 1, hy: 0 });
         }
     }
     if !r.contains(p) && [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()].iter().any(|c| c.distance(p) <= ROTATE_ZONE) {
@@ -1955,6 +2012,20 @@ pub(crate) fn xf_total(kind: XfKind, b: [f32; 4], start: Pos2, cur: Pos2, shift:
             }
             let clamp = |s: f32| if s.abs() < 0.01 { 0.01f32.copysign(if s == 0.0 { 1.0 } else { s }) } else { s };
             about(px, py, Affine::scale(clamp(sx), clamp(sy)))
+        }
+        XfKind::Skew { hx, hy } => {
+            // Top and bottom edges slide sideways, left and right edges slide up and down; the
+            // opposite edge stays put (Alt: the centre does), so the grabbed edge follows the pointer.
+            let k = |moved: f32, arm: f32| if arm.abs() < 1e-3 { 0.0 } else { (moved / arm).clamp(-8.0, 8.0) };
+            if hy != 0 {
+                let py = if alt { cy } else { [y1, cy, y0][(hy + 1) as usize] };
+                let shear = k(cur.x - start.x, start.y - py);
+                about(cx, py, Affine { m: [1.0, 0.0, shear, 1.0, 0.0, 0.0] })
+            } else {
+                let px = if alt { cx } else { [x1, cx, x0][(hx + 1) as usize] };
+                let shear = k(cur.y - start.y, start.x - px);
+                about(px, cy, Affine { m: [1.0, shear, 0.0, 1.0, 0.0, 0.0] })
+            }
         }
         XfKind::Rotate => {
             let a0 = (start.y - cy).atan2(start.x - cx);
@@ -2192,10 +2263,33 @@ mod xf_tests {
     }
 
     #[test]
+    fn dragging_the_top_edge_shears_sideways_about_the_bottom_edge() {
+        // B is 100 x 50: dragging the top edge 10 right moves the top edge 10 right.
+        let m = xf_total(XfKind::Skew { hx: 0, hy: -1 }, B, pos2(50.0, 0.0), pos2(60.0, 0.0), false, false);
+        assert_eq!(apply(&m, 0.0, 0.0), Vec2::new(10.0, 0.0));
+        assert_eq!(apply(&m, 0.0, 50.0), Vec2::new(0.0, 50.0), "the opposite edge stays put");
+        assert!((m.determinant() - 1.0).abs() < 1e-5, "a shear keeps the area");
+    }
+
+    #[test]
+    fn dragging_the_right_edge_shears_vertically_and_alt_pivots_on_the_centre() {
+        let m = xf_total(XfKind::Skew { hx: 1, hy: 0 }, B, pos2(100.0, 25.0), pos2(100.0, 35.0), false, false);
+        assert_eq!(apply(&m, 100.0, 0.0), Vec2::new(100.0, 10.0));
+        assert_eq!(apply(&m, 0.0, 0.0), Vec2::new(0.0, 0.0));
+        let m = xf_total(XfKind::Skew { hx: 1, hy: 0 }, B, pos2(100.0, 25.0), pos2(100.0, 35.0), false, true);
+        assert_eq!(apply(&m, 50.0, 25.0), Vec2::new(50.0, 25.0), "centre stays put");
+        assert_eq!(apply(&m, 100.0, 25.0), Vec2::new(100.0, 35.0));
+    }
+
+    #[test]
     fn zones() {
         let r = Rect::from_min_max(pos2(100.0, 100.0), pos2(300.0, 200.0));
         assert_eq!(xf_zone(r, pos2(300.0, 200.0)), Some(XfKind::Scale { hx: 1, hy: 1 }));
         assert_eq!(xf_zone(r, pos2(200.0, 100.0)), Some(XfKind::Scale { hx: 0, hy: -1 }));
+        assert_eq!(xf_zone(r, pos2(150.0, 101.0)), Some(XfKind::Skew { hx: 0, hy: -1 }));
+        assert_eq!(xf_zone(r, pos2(150.0, 199.0)), Some(XfKind::Skew { hx: 0, hy: 1 }));
+        assert_eq!(xf_zone(r, pos2(99.0, 130.0)), Some(XfKind::Skew { hx: -1, hy: 0 }));
+        assert_eq!(xf_zone(r, pos2(301.0, 130.0)), Some(XfKind::Skew { hx: 1, hy: 0 }));
         assert_eq!(xf_zone(r, pos2(312.0, 212.0)), Some(XfKind::Rotate));
         assert_eq!(xf_zone(r, pos2(200.0, 150.0)), Some(XfKind::Move));
         assert_eq!(xf_zone(r, pos2(500.0, 500.0)), None);

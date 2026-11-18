@@ -50,7 +50,7 @@ pub fn plugin_may_call(id: &str) -> std::result::Result<(), &'static str> {
             // Filter lists are the document's (ADR 0091); copied filters are the artist's
             // clipboard, and the presets their preferences (listing and applying one is fine).
             "filter" if matches!(id, "filter.copy" | "filter.paste") => Err("plug-ins don't use your clipboard"),
-            "filter" if matches!(id, "filter.preset_save" | "filter.preset_rename" | "filter.preset_delete" | "filter.preset_export" | "filter.preset_import") => Err("plug-ins can't change your filter presets or read and write preset files"),
+            "filter" if matches!(id, "filter.preset_save" | "filter.preset_rename" | "filter.preset_delete" | "filter.preset_hide" | "filter.preset_export" | "filter.preset_import") => Err("plug-ins can't change your filter presets or read and write preset files"),
             "filter" => Ok(()),
             // The document's swatches are document data; swatch files are files.
             "swatch" if matches!(id, "swatch.import" | "swatch.export") => Err("plug-ins can't read or write swatch files"),

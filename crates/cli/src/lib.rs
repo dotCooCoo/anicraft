@@ -2,6 +2,8 @@
 //! server (`mcp`). Every operation goes through the engine's command registry.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod control;
 pub mod mcp;
 
 use anicraft_engine::{Session, commands, format};
@@ -45,13 +47,18 @@ USAGE:
         {\"id\":1,\"cmd\":\"draw.rect\",\"params\":{\"x\":10,\"y\":10,\"w\":50,\"h\":50}}
   anicraft-cli mcp [file|--sample]       Model Context Protocol server on stdin/stdout,
                                          for AI assistants (see docs/mcp.md)
+  anicraft-cli mcp --bridge <port>       the same tools, acting live on the AniCraft window
+                                         started with `anicraft --control <port>`
+                                         (docs/control-protocol.md)
   anicraft-cli --version
 
   --plugins <folder>   loads the WebAssembly plug-ins in a folder first (also the
                        ANICRAFT_PLUGINS environment variable); see docs/plugins.md.
                        Without it, headless runs use no plug-ins, so they are repeatable.
 
-Frames on the command line are 1-based, as in the timeline.";
+Frame flags on the command line (--frame, --from, --to) are 1-based, as in the
+timeline. Frame numbers inside JSON params, scripts and command results are
+0-based, as everywhere in the engine.";
 
 /// Parsed flags: positional args plus `--key value` pairs.
 pub struct Args {
@@ -129,13 +136,42 @@ fn one_based(a: &Args, k: &str) -> Result<Option<u32>, String> {
     }
 }
 
+/// The usage of one subcommand, under `USAGE:`: its entries in [`USAGE`] with their
+/// continuation lines, so the two never drift apart. `None` for a name [`USAGE`] doesn't list.
+pub fn subcommand_usage(cmd: &str) -> Option<String> {
+    const ENTRY: &str = "  anicraft-cli ";
+    let mut out = String::new();
+    let mut taking = false;
+    // The entries are the block after `USAGE:`, up to the first blank line.
+    for line in USAGE.lines().skip_while(|l| *l != "USAGE:").skip(1).take_while(|l| !l.trim().is_empty()) {
+        if let Some(rest) = line.strip_prefix(ENTRY) {
+            // `apng|webp` names two subcommands; `--version` is also `version`.
+            let names = rest.split_whitespace().next().unwrap_or("");
+            taking = names.split('|').any(|n| n == cmd || n.strip_prefix("--") == Some(cmd));
+        }
+        if taking {
+            out.push('\n');
+            out.push_str(line);
+        }
+    }
+    (!out.is_empty()).then(|| format!("USAGE:{out}"))
+}
+
 /// Runs the CLI; returns the text to print on success.
 pub fn run(argv: &[String]) -> Result<String, String> {
     let Some((cmd, rest)) = argv.split_first() else { return Ok(USAGE.to_string()) };
+    if cmd == "help" || cmd == "--help" || cmd == "-h" {
+        if let Some(sub) = rest.first().filter(|s| *s != "--help" && *s != "-h") {
+            return subcommand_usage(sub).ok_or_else(|| format!("unknown subcommand '{sub}'\n\n{USAGE}"));
+        }
+        return Ok(USAGE.to_string());
+    }
+    if rest.iter().any(|a| a == "--help" || a == "-h") {
+        return subcommand_usage(cmd).ok_or_else(|| format!("unknown subcommand '{cmd}'\n\n{USAGE}"));
+    }
     let a = Args::parse(rest)?;
     let src = a.positional.first().map(String::as_str);
     match cmd.as_str() {
-        "help" | "--help" | "-h" => Ok(USAGE.to_string()),
         // The release packaging smoke-tests every build with this (packaging/, ADR 0026).
         "version" | "--version" | "-V" => Ok(format!("anicraft-cli {}", env!("CARGO_PKG_VERSION"))),
         "commands" => {
@@ -292,6 +328,24 @@ pub fn run(argv: &[String]) -> Result<String, String> {
             Ok(String::new())
         }
         "mcp" => {
+            if let Some(target) = a.flag("bridge") {
+                if src.is_some() || a.flag("plugins").is_some() {
+                    return Err("mcp --bridge acts on the open AniCraft window: it takes no file or --plugins".into());
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let _ = target;
+                    return Err("mcp --bridge needs sockets, which this build doesn't have".into());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let mut b = control::Bridge::new(control::parse_bridge_target(target)?);
+                    let stdin = std::io::stdin();
+                    let mut stdout = std::io::stdout();
+                    mcp::serve(&mut b, stdin.lock(), &mut stdout).map_err(|e| e.to_string())?;
+                    return Ok(String::new());
+                }
+            }
             let mut s = session(&a, src)?;
             let stdin = std::io::stdin();
             let mut stdout = std::io::stdout();
@@ -770,5 +824,86 @@ mod tests {
         assert!(s(&["guide", "search", "zzzzqqq"]).unwrap().starts_with("nothing in the user guide matches"));
         assert!(s(&["guide", "search"]).is_err() && s(&["guide", "search", "?!"]).is_err());
         assert!(s(&["guide", "search", "pen", "--limit", "x"]).is_err());
+    }
+
+    #[test]
+    fn usage_clarifies_frame_numbering_split() {
+        let help = run(&["help".into()]).unwrap();
+        assert!(help.contains("0-based"), "CLI usage should clarify that JSON command frame numbers are 0-based");
+        assert!(help.contains("1-based"), "CLI usage should clarify that command-line frame flags are 1-based");
+
+        let dir = std::env::temp_dir().join(format!("anicraft-cli-frame-split-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out_cli = dir.join("cli.png");
+        let out_exec = dir.join("exec.png");
+
+        let res_cli: serde_json::Value = serde_json::from_str(
+            &run(&["render".into(), "--sample".into(), "--frame".into(), "1".into(), "--out".into(), out_cli.to_str().unwrap().into()]).unwrap(),
+        )
+        .unwrap();
+
+        let res_exec: serde_json::Value = serde_json::from_str(
+            &run(&[
+                "exec".into(),
+                "--sample".into(),
+                "file.export_png".into(),
+                format!(r#"{{"path": "{}", "frame": 0}}"#, out_exec.to_str().unwrap().replace('\\', "/")),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(res_cli["frame"], 0);
+        assert_eq!(res_exec["frame"], 0);
+        assert_eq!(std::fs::read(&out_cli).unwrap(), std::fs::read(&out_exec).unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn subcommand_help_prints_usage() {
+        let subcommands = ["info", "render", "render-seq", "gif", "apng", "webp", "export", "formats", "commands", "run", "exec", "new", "guide", "bench", "serve", "mcp"];
+        for sub in subcommands {
+            let out_long = run(&[sub.to_string(), "--help".to_string()]).unwrap();
+            assert!(out_long.contains("USAGE:"), "help for {sub} should contain USAGE:");
+            assert!(out_long.contains(sub), "help for {sub} should mention {sub}");
+
+            let out_short = run(&[sub.to_string(), "-h".to_string()]).unwrap();
+            assert_eq!(out_long, out_short);
+
+            let out_help = run(&["help".to_string(), sub.to_string()]).unwrap();
+            assert_eq!(out_long, out_help);
+        }
+
+        // Subcommand help with other arguments present
+        assert_eq!(
+            run(&["render".into(), "--scale".into(), "2".into(), "--help".into()]).unwrap(),
+            run(&["render".into(), "--help".into()]).unwrap()
+        );
+
+        // Unknown subcommand with --help or help still reports unknown
+        assert!(run(&["bogus".into(), "--help".into()]).is_err());
+        assert!(run(&["help".into(), "bogus".into()]).is_err());
+    }
+
+    #[test]
+    fn subcommand_usage_matches_usage_text() {
+        let subcommands =
+            ["info", "render", "render-seq", "gif", "apng", "webp", "export", "formats", "commands", "run", "exec", "new", "guide", "bench", "serve", "mcp", "version"];
+        for sub in subcommands {
+            let u = subcommand_usage(sub).expect("subcommand_usage should exist");
+            let body = u.strip_prefix("USAGE:\n").expect("should start with USAGE:\n");
+            assert!(USAGE.contains(body), "USAGE should contain body for {sub}");
+        }
+        assert_eq!(subcommand_usage("bogus"), None);
+        // Every entry of a subcommand with several comes along, with its continuation lines.
+        let guide = subcommand_usage("guide").unwrap_or_default();
+        assert!(guide.contains("guide --out") && guide.contains("guide search") && guide.contains("best first"), "{guide}");
+        assert!(!guide.contains("bench"), "{guide}");
+        let export = subcommand_usage("export").unwrap_or_default();
+        assert!(export.contains("--options") && export.contains("exporter plug-ins"), "{export}");
+        // Words inside an entry are not subcommands.
+        for word in ["anicraft-cli", "--sample", "file", "", "apng|webp", "--plugins"] {
+            assert_eq!(subcommand_usage(word), None, "{word:?}");
+        }
     }
 }

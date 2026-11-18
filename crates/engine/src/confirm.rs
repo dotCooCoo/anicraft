@@ -347,7 +347,7 @@ pub fn confirmation(s: &Session, id: &str, p: &Value) -> Option<Confirmation> {
             (n > 1).then(|| Confirmation {
                 title: "Remove bone?".into(),
                 message: format!(
-                    "{name}{} {} posed over {}; removing takes {} out of every pose. The instances stay where they are now, on a layer of their own. You can undo this.",
+                    "{name}{} {} posed over {}; removing takes {} out of every pose. What the bones moved stays as it looks now (instances and whole shapes on a layer of their own). You can undo this.",
                     if below > 0 { format!(" and the {} below it", plural(below, "bone")) } else { String::new() },
                     if below > 0 { "are" } else { "is" },
                     plural(n, "keyframe"),

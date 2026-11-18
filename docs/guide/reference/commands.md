@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 360 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 364 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -362,9 +362,9 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Layer Depths** `layer.depths`
   Parameters: `{frame?} → {camera: bool, layers: [{layer, name, depth, keyed, key_here, attached}]} the layers that can have a depth, nearest first (ties in timeline order), at the frame`
 - **Add Bone** `bone.add` · changes the document
-  Parameters: ``{from (instance id: the bone starts on it), to (instance id: the bone moves it), head?: [x, y] (the joint on a root instance, stage px, default its registration point; from an instance that hangs from a bone the joint is always that bone's end, so chains stay joined), tail?: [x, y] (default `to`'s registration point), name?} → {bone, layer}. Both instances go to an armature layer (made for the first bone)``
+  Parameters: ``{from? (instance or shape id: the bone starts on it) | parent? (bone id: the bone starts on its end; for a bone inside a shape, on its joint), to (instance or shape id: the bone moves it as a whole), head?: [x, y] (the joint on a root, stage px, default its registration point; from something that hangs from a bone the joint is always that bone's end, so chains stay joined), tail?: [x, y] (default `to`'s registration point), name?} → {bone, layer}. Both go to an armature layer (made for the first bone). Instances and shapes mix in one armature: a bone inside a shape can carry an instance (parent), and a bone can end on a shape that then gets bones of its own (bone.add_in_shape with parent)``
 - **Add Bone in Shape** `bone.add_in_shape` · changes the document
-  Parameters: `{shape? (shape id: the first bone, or another bone from the shape), parent? (bone id: continue the chain from its end), head?: [x, y] (the joint, stage px; default the parent bone's end), tail: [x, y] (stage px), name?} → {bone, layer, created, points}. The first bone moves the shape to an armature layer of its own, as an object (merge drawing leaves it alone); the shape's points are bound to the nearest bones`
+  Parameters: `{shape? (shape id: the first bone, or another bone from the shape), parent? (bone id: continue the chain from its end; a bone that ends on a shape starts that shape's first bone inside it), head?: [x, y] (the joint, stage px; default the parent bone's end), tail: [x, y] (stage px), name?} → {bone, layer, created, points, shape}. The first bone moves the shape to an armature layer of its own, as an object (merge drawing leaves it alone), unless a bone already moves it; the shape's points are bound to the nearest bones inside it. An armature may hold several shapes with bones`
 - **Bind Points** `bone.bind` · changes the document
   Parameters: `{bone, points?: [point index…] (default every point; see bone.info with points), mode?: "only" (the points follow just this bone; default) | "add" (they share it with the bones they follow) | "remove" | "auto" (back to automatic binding)} → {bone, changed, bound (how many points the bone moves)}. A shape armature's binding: which points of the shape follow which bone`
 - **Paint Weights** `bone.paint_weights` · changes the document
@@ -372,7 +372,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Set Point Weight** `bone.set_weight` · changes the document
   Parameters: `{bone, points: [point index…] (see bone.info with points), weight (0–100: the bone's share of each point)} sets exactly how much the bone moves the points; their other bones share the rest in proportion (a point that followed only this bone gives the rest to its nearest other bones). Hand-bound`
 - **Remove Bone** `bone.remove` · changes the document
-  Parameters: `{bone} removes it and the bones below it; the instances they moved go to a layer of their own as they look at the playhead (with the last bone, the whole armature does); asks first when the armature has more than one pose`
+  Parameters: `{bone} removes it and the bones below it → {removed, freed, unbound, layer, armature_removed}; the instances and shapes they moved go to a layer of their own as they look at the playhead (with the last bone, the whole armature does); a shape left with no bones inside stays as it looks there; asks first when the armature has more than one pose`
 - **Joint Limits** `bone.set_limits` · changes the document
   Parameters: `{bone, constrain?: bool (false: turns freely), min?, max? (°, −360…360, from where it was drawn)} limits how far the joint turns, in every pose`
 - **Joint Translation** `bone.set_translation` · changes the document
@@ -388,7 +388,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Drag Bone** `bone.solve` · changes the document
   Parameters: `{bone, x, y (stage px: where the bone's end goes), local?: [x, y] (the point dragged, in the bone's instance's space; default its end), frame?} → {reached, error (px), chain}; inverse kinematics turns the bone and the bones above it (limits respected, pinned bones kept)`
 - **Armatures** `bone.info`
-  Parameters: `{frame?, layer?, points?: bool} → every armature on the scene at the frame: its bones with joint and end (stage px, as keyed), joint angle and limits (°), slide and translation limits (px), spring (0–100) and its swing at the frame (°, what the spring adds to the angle), pinned; whether springs are on; a shape armature's shape, how many points each bone moves, and with points the shape's points (stage px) and the bones each follows`
+  Parameters: ``{frame?, layer?, points?: bool} → every armature on the scene at the frame: its bones with joint and end (stage px, as keyed), joint angle and limits (°), slide and translation limits (px), spring (0–100) and its swing at the frame (°, what the spring adds to the angle), pinned; whether springs are on; the armature's members and whether it is mixed; each shape with bones (shapes: its bones, how many points, and with points every point on the stage with the bones it follows), the shape each bone is inside and how many points it moves; `shape` and `points` are the first shape's``
 - **Add Warp Pin** `warp.pin_add` · changes the document
   Parameters: `{element?, x, y (stage px, on the artwork)} → {element, pin, created}. Pins the artwork there (adding the mesh first if it has none), on every keyframe that bends the same mesh; nothing moves`
 - **Move Warp Pin** `warp.pin_move` · changes the document
@@ -398,11 +398,11 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Warp Mesh** `warp.info`
   Parameters: `{element?, frame?} → the artwork's warp at the frame: resolution, the mesh's columns, rows, vertices and triangles, whether it is bent, and its pins (id, where they show in stage px, and where they were placed on the artwork as drawn, in its own space)`
 - **Property Keyframe** `motion.set_key` · changes the document
-  Parameters: `{property: x|y|scale_x|scale_y|rotation|skew|alpha|brightness|tint (amount)|tint_red|tint_green|tint_blue (0..255)|red_multiplier|green_multiplier|blue_multiplier|alpha_multiplier (%)|red_offset|green_offset|blue_offset|alpha_offset (-255..255)|filter.<slot>.<blur_x|blur_y|strength (%)|angle|distance|brightness|contrast|saturation|hue> (a number of the object's filter at that place, 0 the first; ADR 0092), value (px, %, °), frame?, layer?} (colour properties of several styles compose into Advanced, ADR 0056)`
+  Parameters: `{property: x|y|scale_x|scale_y|rotation|skew|alpha|brightness|tint (amount)|tint_red|tint_green|tint_blue (0..255)|red_multiplier|green_multiplier|blue_multiplier|alpha_multiplier (%)|red_offset|green_offset|blue_offset|alpha_offset (-255..255)|filter.<slot>.<blur_x|blur_y|strength (%)|angle|distance|brightness|contrast|saturation|hue> (a number of the object's filter at that place, 0 the first; ADR 0092)|filter.<slot>.<color|shadow_color|highlight_color|stop_<n>>_<red|green|blue (0..255)|alpha (%)> (a channel of one of the filter's colours, stop_0 the ramp's first stop)|filter.<slot>.<quality (1..3)|inner|knockout|hide_object (0 or 1)> (stepped: a key holds until the next one; ADR 0099), value (px, %, °), frame?, layer?} or {property: filter.<slot>.<color|shadow_color|highlight_color|stop_<n>>, color: "#rrggbb" or "#rrggbbaa"} to key a filter colour's four channels at once (colour properties of several styles compose into Advanced, ADR 0056)`
 - **Remove Property Keyframe** `motion.remove_key` · changes the document
-  Parameters: `{property? (default: every property), frame?, layer?}`
+  Parameters: `{property? (default: every property; a filter colour such as filter.0.color names its four channels), frame?, layer?}`
 - **Property Ease** `motion.set_ease` · changes the document
-  Parameters: `{easing (as timeline.set_easing takes it, saved eases too), property? (default: every property), frame? (inside the segment), layer?}`
+  Parameters: `{easing (as timeline.set_easing takes it, saved eases too), property? (default: every property; a filter colour such as filter.0.color names its four channels), frame? (inside the segment), layer?} (stepped properties hold their keys and take no ease)`
 - **Motion Tween** `motion.info`
   Parameters: `{layer?, frame?} → the span's properties, keys, eases and values at the frame, its motion path, its anchors pinned to frames (pins) and where the object is`
 - **Edit Motion Path** `motion.set_path` · changes the document
@@ -500,9 +500,9 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Transform** `element.set_transform` · changes the document
   Parameters: `{x?, y?, sx?, sy?, rotation? (degrees)}`
 - **Fill Colour** `element.set_fill` · changes the document
-  Parameters: `{color: "#rrggbb" | null}`
+  Parameters: `{color: "#rrggbb" | "#rrggbbaa" | null} (the alpha is the fill's own; 00 is a clear fill, not the same as null)`
 - **Stroke** `element.set_stroke` · changes the document
-  Parameters: `{color?: "#rrggbb" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}`
+  Parameters: `{color?: "#rrggbb" | "#rrggbbaa" | null, width?, profile?: uniform|taper_both|taper_start|taper_end|bulge|pinch | [[t, left, right], ..], cap?, join?, miter?, style?, dash?, dash_offset?, dot_spacing? (as stroke.set_style)}`
 - **Alpha** `element.set_alpha` · changes the document
   Parameters: `{alpha: 0..1} sets the alpha multiplier and keeps the rest of the colour effect (None becomes Alpha; Brightness and Tint become Advanced below 1)`
 - **Colour Effect** `element.set_color_effect` · changes the document
@@ -602,7 +602,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Movie Explorer** `explorer.tree`
   Parameters: `{scope?: document (default) | scene, show?: {text?, symbols?, scripts?, media?, frames? (layers and keyframes)} (each default true), definitions?: bool (the Library's symbols; default true), expanded?: [row keys] (default: the top rows), all?: bool (everything open), filter?: text (rows whose names hold it, and the rows above them), offset?, limit? (default 1000, at most 10000)} → {rows: [{key, depth, kind, type?, name, extra, frame?, children, open, go: find.goto params}], total, truncated}`
 - **Brush Stroke** `draw.brush` · changes the document
-  Parameters: `{points: [[x, y], [x, y, pressure 0..1 (clamped)] or [x, y, pressure, altitude, azimuth] (the pen's tilt in degrees: altitude 90 upright to 0 flat, azimuth the way it leans, clockwise from +x)], ..] (one point paints a dab), preset? (a brush from brush.preset_list, by key or name: its settings are the defaults for the rest), size? (stage units, default 10), shape?: round|square, angle? (degrees), roundness? (5..100 %, default 100), smoothing? (0..100, default 50), curve?: linear|soft|firm|[[pressure, output], ..] (how pressure maps, both 0..1), pressure_size? (default true: pressure varies the size from 10 to 100 %), pressure_opacity? (default false: the stroke's average pressure sets its opacity), taper_start?, taper_end? (0..50 % of the stroke's length), spacing? (0 continuous, or 5..1000 % of the size between dabs), jitter? (0..50 % of the size: a ragged edge), texture? (0..100 %: a paper grain of holes through the paint), scatter? (0..200 % of the size: dabs thrown either side of the line, varied in size), tilt_angle? (the pen's tilt turns the tip: its angle plus the azimuth), tilt_width? (the pen's tilt widens the tip, up to twice as wide flat; also the Paint Brush's width), as_stroke? (default false; true: the Paint Brush, a variable-width stroke in the stroke colour, editable with the Width tool), mode?: normal|fills|behind|selection|inside (Paint Normal covers fills and lines, Paint Fills leaves lines, Paint Behind paints only empty areas, Paint Selection only inside the selected fills, Paint Inside only inside the fill the stroke starts on or the empty area closed off around it; ADR 0080), color? (default: the fill colour, or the stroke colour as a stroke), unit? (stage units per screen point, default 1: smoothing and accuracy follow it), object?}`
+  Parameters: `{points: [[x, y], [x, y, pressure 0..1 (clamped)] or [x, y, pressure, altitude, azimuth] (the pen's tilt in degrees: altitude 90 upright to 0 flat, azimuth the way it leans, clockwise from +x)], ..] (one point paints a dab), preset? (a brush from brush.preset_list, by key or name: its settings are the defaults for the rest), size? (stage units, default 10), shape?: round|square, angle? (degrees), roundness? (5..100 %, default 100), smoothing? (0..100, default 50), curve?: linear|soft|firm|[[pressure, output], ..] (how pressure maps, both 0..1), pressure_size? (default true: pressure varies the size from 10 to 100 %), pressure_opacity? (default false: the stroke's average pressure sets its opacity), taper_start?, taper_end? (0..50 % of the stroke's length), spacing? (0 continuous, or 5..1000 % of the size between dabs), jitter? (0..50 % of the size: a ragged edge), texture? (0..100 %: a paper grain of holes through the paint), scatter? (0..200 % of the size: dabs thrown either side of the line, varied in size), tilt_angle? (the pen's tilt turns the tip: its angle plus the azimuth), tilt_width? (the pen's tilt widens the tip, up to twice as wide flat; also the Paint Brush's width), as_stroke? (default false; true: the Paint Brush, a variable-width stroke in the stroke colour, editable with the Width tool), mode?: normal|fills|behind|selection|inside (Paint Normal covers fills and lines, Paint Fills leaves lines, Paint Behind paints only empty areas, Paint Selection only inside the selected fills, Paint Inside only inside the fill the stroke starts on or the empty area closed off around it; ADR 0080), color? (default: the fill colour, or the stroke colour as a stroke), unit? (stage units per screen point, default 1: smoothing and accuracy follow it), object? (default the Object Drawing setting; a fill that is not fully opaque is its own shape, so it composites over what is behind it)}`
 - **Brush Presets** `brush.preset_list`
   Parameters: `{} the built-in brushes and yours, with their settings`
 - **Save Brush** `brush.preset_save`
@@ -616,27 +616,29 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Import Brushes** `brush.preset_import`
   Parameters: `{path} adds the brushes in a brush set file to yours (a name you have already gets a number)`
 - **Move Filter** `filter.move` · changes the document
-  Parameters: ``{from, to} moves the filter at index `from` (0 is the first, applied first) to index `to` in the selected movie clip and button instances' lists; the order changes how they draw``
+  Parameters: ``{from, to} moves the filter at index `from` (0 is the first, applied first) to index `to` in the lists of the selected movie clips, buttons and text; the order changes how they draw``
 - **Enable Filter** `filter.enable` · changes the document
   Parameters: `{enabled: bool, index? (default: every filter)} switches a filter on or off; a filter switched off keeps its settings and draws nothing`
 - **Remove Filter** `filter.remove` · changes the document
-  Parameters: `{index? (default: every filter)} removes a filter from the selected movie clip and button instances`
+  Parameters: `{index? (default: every filter)} removes a filter from the selected movie clips, buttons and text`
 - **Copy Filters** `filter.copy`
-  Parameters: `{index? (default: every filter)} copies the selected instance's filters (one, or all), for Paste Filters`
+  Parameters: `{index? (default: every filter)} copies the filters of the selected movie clip, button or text (one, or all), for Paste Filters`
 - **Paste Filters** `filter.paste` · changes the document
-  Parameters: `{replace? (default false: added after the instances' own)} pastes the copied filters onto the selected movie clip and button instances`
+  Parameters: `{replace? (default false: added after their own)} pastes the copied filters onto the selected movie clips, buttons and text`
 - **Filter Presets** `filter.preset_list`
-  Parameters: `{} your filter presets, each a name and its filters`
+  Parameters: `{} → {presets: your filter presets, each a name and its filters; builtin: the built-in ones (ADR 0099), each with its name, filters and whether you have hidden it}`
 - **Save Filter Preset** `filter.preset_save`
-  Parameters: `{name, filters? (a list as element.set_filters takes; default: the selected instance's)} saves a filter preset of your own (kept in your preferences; a name you have already is replaced, after asking)`
+  Parameters: `{name, filters? (a list as element.set_filters takes; default: the selected object's)} saves a filter preset of your own (kept in your preferences; a name you have already is replaced, after asking; a built-in preset's name is refused)`
 - **Apply Filter Preset** `filter.preset_apply` · changes the document
-  Parameters: `{name} gives the selected movie clip and button instances the preset's filters, replacing theirs (as Animate does)`
+  Parameters: `{name: one of yours, or a built-in one (Soft Shadow, Hard Shadow, Neon Glow, Outline, Emboss, Engrave, Soft Focus, Greyscale)} gives the selected movie clips, buttons and text the preset's filters, replacing theirs (as Animate does)`
 - **Rename Filter Preset** `filter.preset_rename`
-  Parameters: `{name, to}`
+  Parameters: `{name, to} (your own presets; the built-in ones keep their names)`
 - **Delete Filter Preset** `filter.preset_delete`
-  Parameters: `{name} deletes a filter preset (asks first: it can't be undone; artwork that used it keeps its filters)`
+  Parameters: `{name} deletes a filter preset of yours (asks first: it can't be undone; artwork that used it keeps its filters). Built-in presets can't be deleted, only hidden (filter.preset_hide)`
+- **Hide Built-in Filter Preset** `filter.preset_hide`
+  Parameters: `{name, hidden? (default true; false shows it again)} hides a built-in filter preset from the presets menu, or shows it again (kept in your preferences; a hidden preset still applies by name)`
 - **Export Filter Presets** `filter.preset_export`
-  Parameters: `{path, names? (default: all)} writes your filter presets to a small JSON file`
+  Parameters: `{path, names? (default: all of yours; built-in ones may be named)} writes filter presets to a small JSON file`
 - **Import Filter Presets** `filter.preset_import`
   Parameters: `{path} adds the presets in a filter preset file to yours (a name you have already gets a number)`
 - **Eraser** `draw.erase` · changes the document
@@ -654,7 +656,7 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Apply Style** `paint.apply_style` · changes the document
   Parameters: `{fill?: bool, stroke?: bool} (default both) gives the selected shapes the fill swatch's paint (shapes with a fill) and the stroke settings (shapes with a line, and drawing objects without one)`
 - **Fill** `paint.set_fill` · changes the document
-  Parameters: ``{type?: solid|linear|radial|bitmap (default: the swatch's), color? (solid), stops?: [{offset: 0..1, color: "#rrggbb" | "#rrggbbaa"}, ..] (2 to 15), spread?: extend|reflect|repeat, linear_rgb?: bool, focal?: -0.98..0.98 (radial), bitmap?: id, selection?: bool (default true)} sets the fill swatch (what new shapes, the Paint Bucket and the Brush pour) and, unless `selection` is false, the fills of the selected shapes. A shape keeping its kind of fill keeps where its gradient or bitmap lies; one changing kind gets it fitted to its bounds. A new gradient starts white to black → {fill: {type, ..}, changed}``
+  Parameters: ``{type?: solid|linear|radial|bitmap (default: the swatch's), color? (solid, "#rrggbb" or "#rrggbbaa"), stops?: [{offset: 0..1, color: "#rrggbb" | "#rrggbbaa"}, ..] (2 to 15; each stop has its own alpha), spread?: extend|reflect|repeat, linear_rgb?: bool, focal?: -0.98..0.98 (radial), bitmap?: id, selection?: bool (default true)} sets the fill swatch (what new shapes, the Paint Bucket and the Brush pour) and, unless `selection` is false, the fills of the selected shapes. A shape keeping its kind of fill keeps where its gradient or bitmap lies; one changing kind gets it fitted to its bounds. A new gradient starts white to black → {fill: {type, ..}, changed}``
 - **Gradient Transform** `paint.transform_fill` · changes the document
   Parameters: `{element?: id (default: the selected shapes with a gradient or bitmap fill), frame?: [a, b, c, d, e, f] (the fill's frame in the space being edited: the box -1..1 onto a linear gradient's span, a radial gradient's ring or one copy of a bitmap), or changes made in this order: scale_x?, scale_y?, scale? (along the frame's own axes), skew_x?, skew_y? (degrees, along its axes), rotate? (degrees, about its centre), move?: [dx, dy], center?: [x, y]; focal?: -0.98..0.98 (radial)} moves, turns, scales or skews where a gradient or bitmap fill lies, as the Gradient Transform tool (F) does → {changed, frames: [[a, b, c, d, e, f], ..]}`
 - **Lock Fill** `paint.lock_fill`
@@ -682,9 +684,15 @@ These commands have no menu item: the panels, the stage and the timeline use the
 - **Export Swatches** `swatch.export`
   Parameters: `{path} writes the document's swatches to a swatch file (JSON) → {written, swatches}`
 - **New Text** `text.create` · changes the document
-  Parameters: `{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), font?, size?, bold?, italic?, color?, align?, letter_spacing?, line_spacing?, width?}`
+  Parameters: `{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), width?, font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px), runs?: [{chars, …character keys}] (styles of the text's characters in order; unset keys take the style above), paragraphs?: [{…paragraph keys}] (one per line of the text)} (ADR 0085)`
 - **Edit Text** `text.edit` · changes the document
-  Parameters: `{text?, font?, size? (px), bold?, italic?, color?, align?: left|center|right, letter_spacing?, line_spacing?, width? (px, wraps; null: one line per paragraph)} on the selected text`
+  Parameters: `{text? (the runs follow the change: typed characters continue the style before them), runs?, paragraphs? (as text.create: replace the styles), width? (px, wraps; null: one line per paragraph), font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none) (every character), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px) (every paragraph)} on the selected text`
+- **Text Character Style** `text.style` · changes the document
+  Parameters: `{start?, end? (characters; default: all), font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none)} styles those characters of the selected text, splitting and joining its runs (ADR 0085)`
+- **Text Paragraph Style** `text.paragraph` · changes the document
+  Parameters: `{start?, end? (characters; default: all), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px)} sets the layout of the paragraphs those characters touch in the selected text (ADR 0085)`
+- **Text Styles** `text.styles`
+  Parameters: `{start?, end? (characters; default: all)} of the first selected text: its runs, paragraphs, and what those characters share (a mixed value is null) (ADR 0085)`
 - **Fonts** `text.fonts`
   Parameters: `{}`
 - **Text on Path** `text.path` · changes the document

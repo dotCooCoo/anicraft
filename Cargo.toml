@@ -118,6 +118,9 @@ sys-locale = "0.3"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The user guide, bundled for Help › User Guide (ADR 0069). The web build serves it as pages instead.
 anicraft-guide.workspace = true
+# The live control port and the tools it serves (ADR 0104): the same dispatcher as the
+# headless MCP server, so live and headless never drift.
+anicraft-cli = { path = "crates/cli" }
 craft-update = { git = "https://github.com/storytold/craft-libs", rev = "83cb1133dd2bdd0d655ba2300f88863f0f53db0b" }
 
 eframe = { workspace = true, features = ["links"] }

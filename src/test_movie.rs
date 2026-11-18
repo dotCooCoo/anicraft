@@ -386,7 +386,7 @@ fn inside(app: &mut App, ctx: &egui::Context, why: crate::platform::Inside) -> A
     let default_h = default_w * sh / sw.max(1.0) + 190.0;
     let title = title(tm);
     let note = why.note().map(crate::i18n::t);
-    let win = egui::Window::new(title.clone())
+    let win = crate::windows::new(ctx, title.clone())
         .id(egui::Id::new("test_movie"))
         .open(&mut shown)
         .collapsible(false)

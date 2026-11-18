@@ -111,7 +111,7 @@ These come across, but look a little different from Animate, and the report coun
   (played without an effect).
 * **Video playback.** Videos other than Screen Video (Sorenson H.263, On2 VP6, H.264, linked
   MPEG-4 files) are named in the report, not shown; their instances are left out.
-* Frame comments, filters on text, and linkage classes on bitmaps and sounds.
+* Frame comments, and linkage classes on bitmaps and sounds.
 * Camera layers and bone armatures don't come across as a camera or an armature.
 * Anything AniCraft doesn't recognise at all is counted as "other elements".
 
