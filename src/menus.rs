@@ -429,6 +429,9 @@ fn enabled(app: &App, id: &str) -> bool {
         "modify.soften_fill_edges" => selected_shape(app, |sh| sh.fill.as_ref().is_some_and(|f| !matches!(f, anicraft_engine::doc::Paint::Bitmap { .. }))),
         // Convert Audio to Keyframes and Auto Lip-Sync read a sound on this timeline (ADR 0114).
         "sound.to_keyframes" | "sound.lip_sync" => app.s.timeline().layers.iter().any(|l| l.has_sounds()),
+        // Data bindings (ADR 0118): one instance and a table to bind; bindings to remove or bake.
+        "data.bind" => crate::data_ui::can_bind(app),
+        "data.unbind" | "data.bake" => crate::data_ui::has_bindings(app),
         "layer.delete" => app.s.timeline().layers.len() > 1,
         "scene.delete" => app.s.doc.scenes.len() > 1,
         // Ctrl+E opens the selected instance, or goes back to the document (ADR 0045).

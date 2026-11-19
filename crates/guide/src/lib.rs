@@ -53,6 +53,7 @@ pub const PAGES: &[Page] = &[
     page!("text.md"),
     page!("images-and-sound.md"),
     page!("interactivity.md"),
+    page!("data-driven-animation.md"),
     page!("exporting-and-publish.md"),
     page!("opening-animate-files.md"),
     page!("preferences-shortcuts-accessibility.md"),
@@ -79,6 +80,8 @@ pub const IMAGES: &[(&str, &[u8])] = &[
     image!("images/preferences.png"),
     image!("images/audio-to-keyframes.png"),
     image!("images/lip-sync.png"),
+    image!("images/data-chart.png"),
+    image!("images/data-table.png"),
 ];
 
 const STYLE: &str = include_str!("style.css");

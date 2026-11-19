@@ -624,11 +624,8 @@ fn export_sprite_sheet(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The ffmpeg to run: `ffmpeg` param, else `ANICRAFT_FFMPEG`, else `ffmpeg` on the PATH.
-fn ffmpeg_program(p: &Value) -> Result<std::ffi::OsString> {
-    if let Some(x) = opt_str(p, "ffmpeg")?.filter(|x| !x.trim().is_empty()) {
-        return Ok(x.into());
-    }
-    Ok(std::env::var_os("ANICRAFT_FFMPEG").filter(|x| !x.is_empty()).unwrap_or_else(|| "ffmpeg".into()))
+pub(crate) fn ffmpeg_program(p: &Value) -> Result<std::ffi::OsString> {
+    Ok(crate::video::program(opt_str(p, "ffmpeg")?))
 }
 
 /// Export Video: movie frames streamed in order to the user's own ffmpeg (AniCraft bundles no

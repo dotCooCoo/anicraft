@@ -17,6 +17,7 @@ pub mod warp;
 mod bitmap;
 mod color_effect;
 pub mod camera;
+pub mod data;
 mod filter;
 mod easing;
 mod eval;
@@ -35,6 +36,7 @@ pub mod sample;
 pub mod templates;
 pub mod sound;
 pub mod swatch;
+pub mod video;
 
 pub use filter::{Channel, FILTER_PARAMS, Filter, FilterColor, FilterEntry, FilterParam, FilterProp, FilterSide, MAX_FILTER_SLOTS, pairing as filter_pairing, active as active_filters, any_active as any_active_filter, pairs_up as filters_pair_up, MAX_BLUR, MAX_QUALITY, MAX_RAMP_STOPS, REST_SNAP, default_bevel_ramp, default_glow_ramp, pinned_stop, ramp_at};
 pub use bitmap::{Bitmap, BitmapId, ImageError, MAX_BITMAP_EDGE, Pixels, base64_decode, base64_encode, decode_png, image_to_png};
@@ -47,6 +49,7 @@ pub use sound::{EnvelopePoint, FrameSound, Sound, SoundEffect, SoundFormat, Soun
 pub use width::{MAX_WIDTH_FACTOR, MAX_WIDTH_POINTS, ProfilePreset, WidthPoint, WidthProfile};
 pub use stroke_style::{Cap, Dash, DashKind, Join, StrokeStyle};
 pub use camera::{Camera, DepthKey};
+pub use data::{Binding, BoundProperty, DataColumn, DataId, DataSet, DataTable, Interp};
 pub use swatch::{MAX_SWATCHES, Swatch, SwatchPaint};
 pub use parenting::{MAX_RIG_DEPTH, RigError};
 pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
@@ -1380,6 +1383,10 @@ pub struct Layer {
     /// [`Timeline::repair_rig`]; read through [`Timeline::rig_spaces`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rig_parent: Option<LayerId>,
+    /// A reference video to trace over (ADR 0116): shown on the stage under this layer's
+    /// artwork, never in the movie or an export. Its pictures are not in the document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<Arc<video::VideoRef>>,
 }
 
 /// How a mask layer's artwork reveals the layers it masks (ADR 0070).
@@ -1475,6 +1482,7 @@ impl PartialEq for Layer {
             && self.mask_mode == o.mask_mode
             && self.opacity.to_bits() == o.opacity.to_bits()
             && self.rig_parent == o.rig_parent
+            && self.video == o.video
             && match (&self.armature, &o.armature) {
                 (Some(a), Some(b)) => arc_eq(a, b),
                 (a, b) => a.is_none() && b.is_none(),
@@ -1513,6 +1521,7 @@ impl Layer {
             mask_mode: MaskMode::Coverage,
             opacity: 1.0,
             rig_parent: None,
+            video: None,
         }
     }
     /// The layer's own opacity, `0..=1` whatever a file says (not a number: opaque).
@@ -1941,6 +1950,9 @@ pub struct Document {
     /// Eases the artist saved by name (ADR 0081), offered with the presets.
     #[serde(default, skip_serializing_if = "eases_is_empty")]
     pub eases: Arc<Vec<SavedEase>>,
+    /// Data tables and what they drive (ADR 0118). Left out of a file that has none.
+    #[serde(default, skip_serializing_if = "data_is_empty")]
+    pub data: Arc<DataSet>,
     /// Next free id for layers, elements and symbols.
     pub next_id: u64,
 }
@@ -1980,6 +1992,8 @@ struct DocumentFile {
     aids: Arc<Aids>,
     #[serde(default)]
     eases: Arc<Vec<SavedEase>>,
+    #[serde(default)]
+    data: Arc<DataSet>,
     #[serde(default = "first_id")]
     next_id: u64,
 }
@@ -1990,7 +2004,7 @@ impl From<DocumentFile> for Document {
         if let Some(tl) = f.timeline {
             scenes.insert(0, Arc::new(Scene { name: "Scene 1".into(), timeline: tl, guides: Vec::new() }));
         }
-        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, document_class: f.document_class, publish: f.publish, aids: f.aids, swatches: f.swatches, eases: f.eases, next_id: f.next_id }
+        Document { stage: f.stage, scenes, library: f.library, bitmaps: f.bitmaps, sounds: f.sounds, library_tree: f.library_tree, document_class: f.document_class, publish: f.publish, aids: f.aids, swatches: f.swatches, eases: f.eases, data: f.data, next_id: f.next_id }
     }
 }
 
@@ -2000,6 +2014,10 @@ fn first_id() -> u64 {
 
 fn library_tree_is_empty(t: &Arc<LibraryTree>) -> bool {
     t.is_empty()
+}
+
+fn data_is_empty(d: &Arc<DataSet>) -> bool {
+    d.is_empty()
 }
 
 fn eases_is_empty(e: &Arc<Vec<SavedEase>>) -> bool {
@@ -2019,13 +2037,13 @@ static NO_TIMELINE: Timeline = Timeline { layers: Vec::new() };
 
 impl PartialEq for Document {
     fn eq(&self, o: &Document) -> bool {
-        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arc_eq(&self.publish, &o.publish) && arc_eq(&self.aids, &o.aids) && arc_eq(&self.swatches, &o.swatches) && arc_eq(&self.eases, &o.eases)
+        self.stage == o.stage && self.next_id == o.next_id && self.document_class == o.document_class && arcs_eq(&self.scenes, &o.scenes) && arcs_eq(&self.library, &o.library) && arcs_eq(&self.bitmaps, &o.bitmaps) && arcs_eq(&self.sounds, &o.sounds) && arc_eq(&self.library_tree, &o.library_tree) && arc_eq(&self.publish, &o.publish) && arc_eq(&self.aids, &o.aids) && arc_eq(&self.swatches, &o.swatches) && arc_eq(&self.eases, &o.eases) && arc_eq(&self.data, &o.data)
     }
 }
 
 impl Default for Document {
     fn default() -> Self {
-        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), document_class: String::new(), publish: Arc::default(), aids: Arc::default(), swatches: default_swatches(), eases: Arc::default(), next_id: 1 };
+        let mut d = Document { stage: Stage::default(), scenes: vec![Arc::new(Scene::new("Scene 1"))], library: Vec::new(), bitmaps: Vec::new(), sounds: Vec::new(), library_tree: Arc::default(), document_class: String::new(), publish: Arc::default(), aids: Arc::default(), swatches: default_swatches(), eases: Arc::default(), data: Arc::default(), next_id: 1 };
         let id = LayerId(d.alloc_id());
         d.timeline_mut(0).layers.push(Arc::new(Layer::new(id, "Layer 1")));
         d
@@ -2119,7 +2137,7 @@ impl Document {
         }
         let mut max_id = 0u64;
         let scan = |l: &Layer, max_id: &mut u64| {
-            *max_id = (*max_id).max(l.id.0);
+            *max_id = (*max_id).max(l.id.0).max(l.video.as_ref().map_or(0, |v| v.id.0));
             for b in l.armature.iter().flat_map(|a| &a.bones) {
                 // A shape armature's joint nodes take ids from the same counter (ADR 0071).
                 *max_id = (*max_id).max(b.id.0).max(b.child.0).max(b.parent.0);
@@ -2154,6 +2172,7 @@ impl Document {
                 sanitize_depth(l);
                 sanitize_armature(l);
                 sanitize_warps(l);
+                sanitize_video(l);
                 scan(l, &mut max_id);
                 sanitize_groups(l, 0, &mut max_id);
             }
@@ -2197,6 +2216,7 @@ impl Document {
                 sanitize_depth(l);
                 sanitize_armature(l);
                 sanitize_warps(l);
+                sanitize_video(l);
                 scan(l, &mut max_id);
                 sanitize_groups(l, 0, &mut max_id);
             }
@@ -2209,7 +2229,18 @@ impl Document {
             max_id = max_id.max(s.id.0);
         }
         self.sanitize_library_tree(&mut max_id);
+        self.sanitize_data(&mut max_id);
         self.next_id = self.next_id.max(max_id.saturating_add(1));
+    }
+}
+
+/// A reference video (ADR 0116) a file can't mean is repaired, or dropped. Touches only what
+/// needs it.
+fn sanitize_video(layer: &mut Arc<Layer>) {
+    let Some(v) = &layer.video else { return };
+    let fixed = v.sanitized();
+    if fixed.as_ref() != Some(&**v) {
+        Arc::make_mut(layer).video = fixed.map(Arc::new);
     }
 }
 

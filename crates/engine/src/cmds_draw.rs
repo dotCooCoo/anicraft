@@ -1160,10 +1160,12 @@ pub(crate) fn place(s: &mut Session, p: &Value) -> Result<Value> {
                 LibraryItem::Symbol(id) => format!("no symbol with id {}", id.0),
                 LibraryItem::Bitmap(id) => format!("no bitmap with id {}", id.0),
                 LibraryItem::Sound(id) => format!("no sound with id {} in the library", id.0),
+                LibraryItem::Data(id) => format!("no data table with id {}", id.0),
             }));
         }
         match i {
             LibraryItem::Symbol(id) if crate::editing::would_nest(s, id) => return Err(EngineError::State("a symbol can't be placed inside itself".into())),
+            LibraryItem::Data(_) => return Err(EngineError::State("a data table isn't artwork, so it can't be placed: bind one of its columns to an instance (Modify › Data › Bind to Data, or data.bind)".into())),
             LibraryItem::Sound(id) => {
                 if sound.is_some_and(|x| x != id) {
                     return Err(EngineError::State("a keyframe holds one sound; place sounds one at a time, on different keyframes or layers".into()));
@@ -1183,7 +1185,7 @@ pub(crate) fn place(s: &mut Session, p: &Value) -> Result<Value> {
         match i {
             LibraryItem::Symbol(id) => placed.push(place_symbol(s, id, x, y)?),
             LibraryItem::Bitmap(id) => placed.push(place_bitmap(s, id, x, y)?),
-            LibraryItem::Sound(_) => {}
+            LibraryItem::Sound(_) | LibraryItem::Data(_) => {}
         }
     }
     let mut out = json!({"element": placed.first().map(|e| e.0), "elements": placed.iter().map(|e| e.0).collect::<Vec<_>>()});

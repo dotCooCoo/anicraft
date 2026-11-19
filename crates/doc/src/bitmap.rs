@@ -93,6 +93,17 @@ impl Bitmap {
         Some(Bitmap { id, name: name.into(), width, height, png: Arc::new(png), smoothing: true, decoded: Arc::new(decoded) })
     }
 
+    /// [`Bitmap::from_rgba`] for one picture of many (a video's frames, ADR 0116): only the
+    /// PNG is kept, and the pixels are decoded again when the picture is first shown, so a
+    /// long sequence costs its PNGs, not every frame's pixels at once.
+    pub fn from_rgba_stored(id: BitmapId, name: impl Into<String>, width: u32, height: u32, rgba: &[u8]) -> Option<Bitmap> {
+        if width == 0 || height == 0 || width > MAX_BITMAP_EDGE || height > MAX_BITMAP_EDGE || rgba.len() != width as usize * height as usize * 4 {
+            return None;
+        }
+        let png = encode_png(width, height, rgba)?;
+        Some(Bitmap { id, name: name.into(), width, height, png: Arc::new(png), smoothing: true, decoded: Arc::new(OnceLock::new()) })
+    }
+
     /// The decoded pixels (decoded once and shared by every clone). `None` for unreadable data.
     pub fn pixels(&self) -> Option<Arc<Pixels>> {
         self.decoded.get_or_init(|| decode_png(&self.png).map(Arc::new)).clone()

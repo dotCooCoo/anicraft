@@ -716,7 +716,7 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
         let guide = cx.guide || is_guide;
         // A layer guided by a guide layer: its tweens follow the guide's first path.
         let walk = layer.parent.and_then(|p| tl.layer(p)).filter(|g| g.kind == LayerKind::Guide).and_then(|g| guide_walk(g, frame));
-        let Some((kf_start, elements)) = evaluate_shown(layer, frame, walk.as_ref(), doc.stage.fps) else { continue };
+        let shown = evaluate_shown(layer, frame, walk.as_ref(), doc.stage.fps);
         let layer_outline = cx.outline.or(if layer.outline && cx.stage { Some(layer.color) } else { None });
         // Through a camera, each layer is placed by the camera and its own depth (an attached
         // layer stays put); a layer the camera has passed isn't drawn.
@@ -731,6 +731,33 @@ fn eval_timeline(doc: &Document, tl: &Timeline, frame: u32, cx: &Ctx, out: &mut 
             Some(space) => layer_xf.mul(space),
             None => layer_xf,
         };
+        // A reference video (ADR 0116) goes under the layer's artwork: a placeholder with no
+        // paint, marked as guide artwork, so it is in no movie and no export. The stage alone
+        // fills it with the video's frame. Only on the timeline being looked at, never through
+        // a symbol or in mask artwork.
+        if let Some(v) = layer.video.as_deref().filter(|v| cx.depth == 0 && masks.is_none() && v.time_at(frame, doc.stage.fps).is_some()) {
+            out.items.push(DisplayItem {
+                path: Arc::new(Path::rect(0.0, 0.0, v.width as f32, v.height as f32)),
+                transform: layer_xf.mul(&v.transform),
+                fill: None,
+                stroke: None,
+                fill_rule: FillRule::NonZero,
+                color: ColorTransform::alpha(tl.layer_opacity(index)),
+                layer: layer.id,
+                element: v.id,
+                outline: None,
+                clip: None,
+                masks: None,
+                guide: true,
+                group: None,
+                image: None,
+                smooth: true,
+                warp: None,
+            });
+        }
+        let Some((kf_start, elements)) = shown else { continue };
+        // Data bindings (ADR 0118): a table's column in place of a bound instance's property.
+        let elements = doc.bound_elements(elements, frame);
         let lc = LayerCtx { layer, frame, kf_start, clip, masks, guide, outline: layer_outline, xf: layer_xf };
         // A layer below full opacity (its own, or a folder's it is in; ADR 0111) fades as one:
         // its artwork composites in a group, and the group blends at the layer's opacity, so

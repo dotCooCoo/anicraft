@@ -40,6 +40,9 @@ craft-webp = { git = "https://github.com/storytold/craft-libs", rev = "221efe1b0
 craft-xfl = { git = "https://github.com/storytold/craft-libs", rev = "221efe1b01c6e2d1108204a200f0b094abdffba1" }
 craft-xml = { git = "https://github.com/storytold/craft-libs", rev = "221efe1b01c6e2d1108204a200f0b094abdffba1" }
 craft-svg = { version = "0.1.0", git = "https://github.com/storytold/craft-libs", rev = "b041cd8224af0d57fa62c428184a32a7d5d0f92b", default-features = false }
+# Delimited text (CSV, TSV) for data tables (ADR 0118): encoding and delimiter detection and a
+# bounded record parser. The same reviewed commit as craft-mime and craft-gif.
+craft-csv = { git = "https://github.com/storytold/craft-libs", rev = "221efe1b01c6e2d1108204a200f0b094abdffba1" }
 # The GPU stage (ADR 0019) uses the wgpu that eframe's egui-wgpu brings, with the same
 # (default) features, so the tree keeps one wgpu build.
 wgpu = "30"

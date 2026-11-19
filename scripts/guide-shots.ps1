@@ -30,7 +30,9 @@ $Shots = @(
   @("publish-settings", "publish"),
   @("preferences", "prefs"),
   @("audio-to-keyframes", "audiokeys"),
-  @("lip-sync", "lipsynced")
+  @("lip-sync", "lipsynced"),
+  @("data-chart", "datachart"),
+  @("data-table", "datatable")
 )
 New-Item -ItemType Directory -Force $Out | Out-Null
 foreach ($s in $Shots) {

@@ -1318,6 +1318,8 @@ fn selection_props(app: &mut App, ui: &mut egui::Ui, e: &anicraft_engine::doc::E
             } else if kind == SymbolKind::MovieClip {
                 ui.label(text(Type::Caption, trn!("Plays its {n}-frame timeline on a loop from when it appears.", "Plays its {n}-frame timeline on a loop from when it appears.", frames)));
             }
+            // What a data table drives of this instance (ADR 0118).
+            crate::data_ui::instance_section(app, ui, e.id);
         }
         if let ElementKind::Text(t) = &e.kind {
             ui.add_space(4.0);

@@ -121,6 +121,22 @@ anicraft-cli run shot010.anicraft title.json --save shot010_titled.anicraft
 Steps run in order. The first one that fails stops the run, and the error names the step. The
 results of all the steps print as a JSON array.
 
+### A chart from numbers
+
+Tables of numbers can drive instances (see [Data-driven animation](data-driven-animation.md)).
+This script gives a document a table and lets one of its columns set the height of the selected
+bar, frame by frame:
+
+```json
+[
+  {"cmd": "data.set_table", "params": {"name": "Rainfall", "columns": [{"name": "Jan", "values": [40, 85, 120, 96]}]}},
+  {"cmd": "data.bind", "params": {"property": "scale_y", "table": "Rainfall", "column": "Jan", "frames": 24}}
+]
+```
+
+`data.import_table` reads the numbers from a CSV, TSV or JSON file instead, and importing a
+table that is already there replaces its values and keeps what is bound to it.
+
 ### Publishing a document
 
 If a document has **File › Publish Settings** set up, one command writes every format it has

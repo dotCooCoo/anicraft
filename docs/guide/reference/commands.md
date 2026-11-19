@@ -1,6 +1,6 @@
 # Command reference
 
-Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 381 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
+Everything you can do in AniCraft is a command: the menus, the shortcuts, the command palette (**Ctrl+K**, macOS **⌘K**), `anicraft-cli` and AI assistants over MCP all run the same 395 commands, listed here by menu. The id is what scripts and [working headless](../working-headless.md) use; the parameters are what a command takes as JSON. Commands that change the document are one undo step each. Your own shortcuts (**Help › Keyboard Shortcuts**) replace the defaults shown here; see the [shortcut reference](shortcuts.md).
 
 This page is generated from the command registry, so it always matches the version of AniCraft it came with.
 
@@ -48,10 +48,14 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{formats? ([format, …]: only these; default: the ones Publish Settings has on), confirm? (to replace files already there)}`
 - **Recover Autosaved Documents…** `file.recovery_list`
   Parameters: `{dir (the recovery folder)}`
+- **Import Data Table…** `data.import_table` · File › Import · changes the document
+  Parameters: `{path (.csv, .tsv or .json, up to 32 MB: the first record names the columns; cells that aren't numbers become gaps, and a column with no number is left out), name? (default the file's name), table? (id or name of a table to replace: its bindings stay), key? (the column rows are looked up by, e.g. an age or a time; default by row number, or the replaced table's key), format?: auto|csv|tsv|json} → {table, name, rows, columns, key, skipped, gaps, truncated, replaced, bindings, missing (columns bindings read that are gone)}`
 - **Import to Library…** `file.import_to_library` · File › Import · changes the document
   Parameters: `{path (.wav, .ogg or .mp3 sound; .png or .jpg image; .svg drawing: a graphic symbol named after the file holding its shapes), name?}`
 - **Export Audio…** `file.export_audio` · File › Export
   Parameters: `{path (.wav), from?, to? (movie frames), rate? (Hz, default 44100), bits? (16, 24 or 32 = float; default 16), confirm?}`
+- **Import Video…** `file.import_video` · File › Import · changes the document
+  Parameters: `{path (any video your ffmpeg reads: .mp4, .mov, .webm, .mkv, .avi, .gif…), mode? (frames (default): the video's frames become bitmaps on a new layer from the playhead, one keyframe each at the document's frame rate, with its sound as a stream sound on a layer of its own | reference: a locked guide layer right under the active layer (under its folder, if it is in one) that shows the video beneath what you draw, for tracing; the video stays a file and is in no export), step? (frames: one picture every 1–60 document frames; default 1), max_edge? (frames: longest edge of the pictures in pixels, 16–4096; default 1280; a smaller video is never enlarged), start? (seconds into the video to begin at), length? (frames: seconds of video to take), max_frames? (frames: most pictures to take, 1–2000), audio? (frames: default true), ffmpeg? (path; else ANICRAFT_FFMPEG, else ffmpeg on the PATH)} → {mode, layer, frames, width, height, step, truncated, sound, note}. Decoding is done by your ffmpeg (ADR 0116); at most 2000 pictures and 1 GB of decoded pixels are taken, and the rest is left out (truncated)`
 
 ## Edit
 
@@ -242,6 +246,12 @@ This page is generated from the command registry, so it always matches the versi
   Parameters: `{}`
 - **Distribute Vertical Centers** `align.distribute_v` · Modify › Align · changes the document
   Parameters: `{}`
+- **Bind to Data…** `data.bind` · Modify › Data · changes the document
+  Parameters: `{property: x|y|scale_x|scale_y|rotation|alpha|frame (x, y pixels; scales and alpha percent; rotation degrees; frame: the 0-based frame of its symbol a graphic instance shows), table (id or name), column, element? (a symbol instance's id; default the selected one), start? (the span's first frame, 0-based; default the first frame the instance is on), frames? (the span's length; default one frame per row, or with a key column the frames the instance is on), from?, to? (the keys the first and last frame show; default the table's first and last; to before from plays it backwards), interpolation?: linear|step, scale?, offset? (value = column × scale + offset)} one binding per property of an instance; before the span it shows the first frame's value, after it the last's → {element, property, table, column, start, frames, value}`
+- **Remove Data Bindings** `data.unbind` · Modify › Data · changes the document
+  Parameters: `{element? (default every selected instance), property? (default all of them)} → {removed}`
+- **Bake Data to Keyframes** `data.bake` · Modify › Data · changes the document
+  Parameters: `{element? (default every selected instance with bindings), property? (default all of them)} writes what the bindings show as keyframes on the instance's layer (one where the value changes; one per frame inside a classic tween) and removes the bindings: every frame looks as it did → {keys, elements, removed}`
 - **Attach Text to Path** `text.attach_path` · Modify › Text · changes the document
   Parameters: `{path?: element id of a shape (default: the other selected element, a shape), x?, y? (pick the shape at this stage point instead), offset? (px along the path; default by the text's alignment: its start, middle or end), flip?: bool} sets the selected static text along a copy of the shape's outline (its first contour); the shape stays as it is (ADR 0070)`
 - **Release Text from Path** `text.release_path` · Modify › Text · changes the document
@@ -713,6 +723,20 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{path: a swatch file (.json, from swatch.export) or a GIMP palette (.gpl), replace?: bool (default false: added at the end)} → {imported, count}`
 - **Export Swatches** `swatch.export`
   Parameters: `{path} writes the document's swatches to a swatch file (JSON) → {written, swatches}`
+- **Set Data Table** `data.set_table` · changes the document
+  Parameters: ``{name, columns: [{name, values: [number | null, ..]}, ..] (in this order) | {name: [..], ..} (sorted by name) | [names] with rows: [[..], ..], key?, table? (id or name of the table to replace; default the table called `name`)} the table's values inline (null is a gap); replacing a table keeps its bindings → as data.import_table``
+- **Data Tables** `data.list`
+  Parameters: `{} → {tables: [{table, name, rows, columns: [names], key, source, folder, bindings}], bindings (how many in the document)}`
+- **Data Table Values** `data.get`
+  Parameters: `{table (id or name), from? (first row, 0-based), count? (rows, at most 10,000)} → {table, name, key, rows, from, columns: [{name, values: [number | null, ..]}]}`
+- **Set Data Cell** `data.set_cell` · changes the document
+  Parameters: `{table (id or name), column, row (0-based), value (number, or null for a gap)}: every binding that reads the cell shows the new value`
+- **Set Key Column** `data.set_key` · changes the document
+  Parameters: `{table (id or name), key (a column's name, or null: rows are looked up by row number)}: a table with a key keeps its rows in the key's ascending order`
+- **Delete Data Table** `data.remove` · changes the document
+  Parameters: `{table (id or name)} deletes the table and the bindings that read it (undoable) → {deleted, uses}`
+- **Data Bindings** `data.bindings`
+  Parameters: `{element? (default every binding in the document)} → {bindings: [{element, property, table, table_name, column, start, frames, from, to, interpolation, scale, offset, live (the table and column exist), value (at the playhead, or null)}]}`
 - **New Text** `text.create` · changes the document
   Parameters: `{text (may be empty for an input field), type?: static|dynamic|input, x?, y? (top-left; default: centred), width?, font?, size? (px), bold?, italic?, color?, letter_spacing?, shift?: normal|superscript|subscript, underline?, url? ("": none), align?: left|center|right, indent? (px, first line), left_margin?, right_margin? (px), line_spacing? (px), runs?: [{chars, …character keys}] (styles of the text's characters in order; unset keys take the style above), paragraphs?: [{…paragraph keys}] (one per line of the text)} (ADR 0085)`
 - **Edit Text** `text.edit` · changes the document
@@ -761,6 +785,10 @@ These commands have no menu item: the panels, the stage and the timeline use the
   Parameters: `{sound, name}`
 - **Analyse Sound** `sound.analyse`
   Parameters: `{what?: levels|visemes (default levels), sound_layer?, sound_frame?, from?, to?, threshold?, smoothing?, channel? (levels), hold? (visemes)} → {sound, name, layer, keyframe, from, to, fps, levels (each frame's loudness, 0–1 of the loudest) and values (gated and smoothed), or visemes (rest|open|wide|round|closed per frame)}`
+- **Video Information** `file.video_info`
+  Parameters: `{path, step?, max_edge?, start?, length?, max_frames?, ffmpeg?} what importing the video with these settings would take, before anything is decoded → {width, height, seconds, fps, audio, plan: {frames, width, height, limit, truncated, memory (bytes of decoded pixels)}}`
+- **Reference Video** `layer.set_video` · changes the document
+  Parameters: `{layer?, path? (relink: another file, or the same one where it moved), start? (the timeline frame, from 0, where the video begins), offset? (seconds into the video shown there), remove? (true: the layer keeps its artwork and loses the video), ffmpeg?} changes a layer's reference video (ADR 0116) → {layer, video}`
 - **Set Actions** `actions.set` · changes the document
   Parameters: `{actions: [{op: stop|play|goto_and_play|goto_and_stop|next_frame|prev_frame|next_scene|prev_scene|trace|set_property, target?, frame?, scene?, message?, property?, value?}] | plugin: id, entry?, symbol?: id (a movie clip's timeline), layer?, frame?} sets what the keyframe at the frame runs; or {element, event: click|press|release|over|out, actions} sets an instance's event handler. An empty list clears it`
 - **Clear Actions** `actions.clear` · changes the document

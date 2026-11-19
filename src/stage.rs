@@ -1029,7 +1029,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let start = app.s.doc.scene_start(app.s.scene);
         let frame = app.s.frame;
         // Inside a symbol open in place, onion skin composes the symbol's own frames (ADR 0051).
-        let jobs: Vec<(TileSpec, FrameJob)> = visible.into_iter().map(|t| { let j = make_job_for(raster, state, &pic.doc, pic.frame, t.view, onion).through_camera(preview).inside(pic.front.clone()); (t, j) }).collect();
+        // Reference videos (ADR 0116): their pictures for this frame, on the stage alone. The
+        // ones not decoded yet are on their way, and bring a repaint.
+        let reference = crate::video_import::stage_frames(app, ui.ctx(), &pic.doc, pic.frame, true);
+        let jobs: Vec<(TileSpec, FrameJob)> = visible.into_iter().map(|t| { let j = make_job_for(raster, state, &pic.doc, pic.frame, t.view, onion).through_camera(preview).inside(pic.front.clone()).with_reference(reference.clone()); (t, j) }).collect();
         let keys: Vec<u64> = jobs.iter().map(|(_, j)| j.key).collect();
         let missing: Vec<usize> = (0..jobs.len()).filter(|&i| !app.stage_cache.has(keys[i])).collect();
 
@@ -1094,10 +1097,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 let n = app.s.frame_count().max(1);
                 for d in 1..=LOOKAHEAD.min(n - 1) {
                     let f = (frame + d) % n;
-                    ahead.extend(jobs.iter().map(|(t, _)| make_job_for(raster, state, &app.s.doc, start + f, t.view, None).through_camera(preview)));
+                    // With the pictures already decoded for that frame (none are asked for).
+                    let then = anicraft_engine::video::shown(&app.video, &app.s.doc, start + f, false).frames;
+                    ahead.extend(jobs.iter().map(|(t, _)| make_job_for(raster, state, &app.s.doc, start + f, t.view, None).through_camera(preview).with_reference(then.clone())));
                 }
             } else {
-                ahead.extend(tiles_for(z, stage_px, px, 1, bg, pasteboard).into_iter().filter(|t| !jobs.iter().any(|(v, _)| v.rect == t.rect)).map(|t| make_job_for(raster, state, &pic.doc, pic.frame, t.view, onion).through_camera(preview)));
+                ahead.extend(tiles_for(z, stage_px, px, 1, bg, pasteboard).into_iter().filter(|t| !jobs.iter().any(|(v, _)| v.rect == t.rect)).map(|t| make_job_for(raster, state, &pic.doc, pic.frame, t.view, onion).through_camera(preview).with_reference(reference.clone())));
             }
             svc.prefetch(ahead);
         }

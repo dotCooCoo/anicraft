@@ -397,6 +397,10 @@ pub struct App {
     /// (its preview is a gesture it keeps open until OK or Cancel), and what it was last given.
     pub audio_keys: Option<crate::audio_keys::Dialog>,
     pub audio_keys_last: crate::audio_keys::Settings,
+    /// The data table the table viewer shows, while it is open (ADR 0118).
+    pub data_view: Option<anicraft_engine::doc::DataId>,
+    /// Import Again: the table the next Import Data Table replaces.
+    pub data_reimport: Option<anicraft_engine::doc::DataId>,
     pub show_about: bool,
     pub show_files: bool,
     pub show_licenses: bool,
@@ -563,6 +567,12 @@ pub struct App {
     pub find: crate::find_panel::FindState,
     /// File › Publish Settings and the publish running or last run (ADR 0060).
     pub publish: crate::publish_panel::PublishState,
+    /// File › Import › Import Video while its window is open (ADR 0116).
+    pub video_import: Option<crate::video_import::VideoImport>,
+    /// The reference videos' pictures for the stage: decoded on demand, within a memory budget.
+    pub video: anicraft_engine::video::Cache,
+    /// Why a reference video can't be shown, as last said in the status bar (said once).
+    pub video_failed: Option<String>,
     /// Window › Movie Explorer, the Library dock's other tab (ADR 0058).
     pub explorer: crate::movie_explorer::ExplorerView,
     pub actions: crate::actions_panel::State,
@@ -776,6 +786,8 @@ impl App {
             convert_last: Default::default(),
             shape_dialog: None,
             audio_keys: None,
+            data_view: None,
+            data_reimport: None,
             audio_keys_last: crate::audio_keys::Settings::default(),
             shape_last: Default::default(),
             show_about: false,
@@ -864,6 +876,9 @@ impl App {
             output_log: Vec::new(),
             find: Default::default(),
             publish: Default::default(),
+            video_import: None,
+            video: Default::default(),
+            video_failed: None,
             explorer: Default::default(),
             actions: crate::actions_panel::State::default(),
             test_movie: None,
@@ -1358,6 +1373,47 @@ impl App {
         }
     }
 
+    /// A reference video under a tracing layer (ADR 0116), for screenshots: a two-second test
+    /// film made here with the ffmpeg on this computer, imported as a reference layer, with a
+    /// few traced strokes on the layer above; its first pictures are waited for (at most a few
+    /// seconds) so the stage shows them. Without ffmpeg the status bar says so.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_reference_video(&mut self) {
+        let clip = std::env::temp_dir().join("anicraft-reference-shot.mkv");
+        let made = std::process::Command::new(anicraft_engine::video::program(None))
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=duration=2:size=640x360:rate=24", "-c:v", "mpeg4", "-q:v", "3"])
+            .arg(&clip)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !made {
+            self.status_err(tr!("AniCraft reads video with ffmpeg, which is not on this computer: install it from ffmpeg.org."));
+            return;
+        }
+        self.perform_here("file.import_video", json!({"path": clip.display().to_string(), "mode": "reference"}));
+        // Traced over it, on the layer above: an outline in ink, as a rotoscoper draws.
+        self.run("layer.new", json!({"name": "Tracing"}));
+        let stage = self.s.doc.stage;
+        let (cx, cy) = (stage.width as f32 * 0.5, stage.height as f32 * 0.5);
+        let ring: Vec<[f32; 2]> = (0..=72).map(|i| (i as f32 * 5.0).to_radians()).map(|a| [cx + a.cos() * 118.0, cy + a.sin() * 118.0]).collect();
+        self.run("draw.freehand", json!({"points": ring, "stroke_width": 4, "stroke": "#ff3d7f"}));
+        let cross: Vec<[f32; 2]> = (0..=40).map(|i| [cx - 150.0 + i as f32 * 7.5, cy + (i as f32 * 0.3).sin() * 6.0]).collect();
+        self.run("draw.freehand", json!({"points": cross, "stroke_width": 4, "stroke": "#ff3d7f"}));
+        self.run("timeline.goto", json!({"frame": 6}));
+        self.s.mark_saved();
+        // The frame under the playhead, decoded before the picture is taken.
+        let doc = self.s.doc.clone();
+        let frame = self.s.doc.scene_start(self.s.scene) + self.s.frame;
+        let _ = anicraft_engine::video::shown(&self.video, &doc, frame, true);
+        self.video.wait_idle(std::time::Duration::from_secs(10));
+    }
+
+    /// A web page can't start ffmpeg (ADR 0036).
+    #[cfg(target_arch = "wasm32")]
+    fn open_reference_video(&mut self) {
+        self.status_err(crate::i18n::t(platform::unavailable("file.import_video").unwrap_or("")));
+    }
+
     /// `--open` at start-up: shows a panel, for visual checks and documentation screenshots.
     /// Imports a two-second beat made here (decaying 220 Hz pulses every half second) to the
     /// stage, for screenshots; whether it worked.
@@ -1808,6 +1864,17 @@ impl App {
                 // Layer Properties (ADR 0061) on the active layer.
                 crate::layer_props::open(self, None);
             }
+            Some("videoimport") => {
+                // File › Import › Import Video (ADR 0116) with a film described: the two ways
+                // to take it, the options and what it will cost (no ffmpeg needed to show it).
+                let probe = anicraft_engine::video::Probe { width: 1920, height: 1080, duration: Some(8.0), fps: Some(29.97), audio: true };
+                crate::video_import::open_with(self, PathBuf::from("walk-cycle.mp4"), probe);
+                if let Some(d) = &mut self.video_import {
+                    d.mode = crate::video_import::Mode::Frames;
+                    d.step = 2;
+                }
+            }
+            Some("video") => self.open_reference_video(),
             Some("frameview") => self.tl_frame_view_open = true,
             Some("layercolour") => self.tl_color_open = Some(self.s.layer),
             Some("timelinepolish") => {
@@ -2590,6 +2657,12 @@ impl App {
                 self.brush_samples = (0..=30).map(|i| (anicraft_engine::geom::Vec2::new(720.0 + i as f32 * 12.0, 310.0), None)).collect();
                 crate::erasertool::commit(self, crate::pathtools::Xf { origin: egui::Pos2::ZERO, zoom: 1.0 });
             }
+            Some(which @ ("datachart" | "datatable")) => {
+                // Data tables that drive animation (ADR 0118): a bar chart whose bars follow a
+                // table's columns, one selected with its bindings in Properties; `datatable`
+                // also has the table viewer open.
+                crate::data_ui::sample_chart(self, which == "datatable");
+            }
             Some("eyedropper") => {
                 // The sample's sky gradient picked with the Eyedropper: the fill swatch holds it.
                 self.run("paint.pick", json!({"x": 640, "y": 40}));
@@ -3254,7 +3327,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3266,6 +3339,14 @@ impl App {
             && let (Some(o), Some(f)) = (params.as_object_mut(), crate::macros_ui::folder(self))
         {
             o.insert("folder".into(), json!(f.display().to_string()));
+        }
+        // Import Again (ADR 0118): the file picked replaces the table it was asked for.
+        if id == "data.import_table"
+            && let Some(t) = self.data_reimport.take()
+            && params.get("table").is_none()
+            && let Some(o) = params.as_object_mut()
+        {
+            o.insert("table".into(), json!(t.0));
         }
         // New and Open bring their document in a tab of its own (ADR 0112): the one being
         // edited stays open, so there is nothing to ask about.
@@ -3298,6 +3379,14 @@ impl App {
             // File › Publish runs in the background, with its own progress view (ADR 0060).
             crate::publish_panel::start(self, &params);
             return None;
+        }
+        if id == "file.import_video" && params.get("mode").is_none() && !platform::WEB {
+            // From the menu, with only the file chosen: the Import Video window asks how to
+            // take it, and decodes with progress and Cancel (ADR 0116).
+            if let Some(path) = params.get("path").and_then(Value::as_str) {
+                crate::video_import::open(self, PathBuf::from(path));
+                return None;
+            }
         }
         let selected = self.s.selection.len();
         // A browser's autosaved copy opens as a file (ADR 0036): it is a restore all the same.
@@ -3367,6 +3456,15 @@ impl App {
                 let path = v["saved"].as_str().unwrap_or("");
                 self.status_ok(if platform::WEB { tr!("Saved {path} to your downloads", path = path) } else { tr!("Saved {path}", path = path) });
             }
+            "data.import_table" => crate::data_ui::imported(self, v),
+            "data.unbind" => {
+                let n = v["removed"].as_u64().unwrap_or(0);
+                self.status_ok(trn!("Removed {n} data binding. {undo} to undo.", "Removed {n} data bindings. {undo} to undo.", n, undo = self.undo_key()));
+            }
+            "data.bake" => {
+                let n = v["keys"].as_u64().unwrap_or(0);
+                self.status_ok(trn!("Baked the data into {n} new keyframe. {undo} to undo.", "Baked the data into {n} new keyframes. {undo} to undo.", n, undo = self.undo_key()));
+            }
             "file.import" | "file.import_to_library" if v.get("sound").is_some() => {
                 let id = anicraft_engine::doc::SoundId(v["sound"].as_u64().unwrap_or(0));
                 self.library_sel = Some(LibraryItem::Sound(id));
@@ -3399,6 +3497,35 @@ impl App {
                 } else {
                     trn!("Replaced {n} place — {undo} to undo", "Replaced {n} places — {undo} to undo", n, undo = self.undo_key())
                 });
+            }
+            "file.import_video" => {
+                let undo = self.undo_key();
+                let n = v["frames"].as_u64().unwrap_or(0);
+                let from = v["from"].as_u64().unwrap_or(0) + 1;
+                let mut said = if v["mode"] == "reference" {
+                    // The pictures come from the file as the playhead moves.
+                    self.video.retry();
+                    trn!("The video is on a locked guide layer under the layer you are on, for {n} frame. Draw on the layers above it; it is never exported. {undo} to undo.", "The video is on a locked guide layer under the layer you are on, for {n} frames. Draw on the layers above it; it is never exported. {undo} to undo.", n, undo = undo)
+                } else if v["sound"].is_null() {
+                    trn!("{n} video frame is on a new layer from frame {from}. {undo} to undo.", "{n} video frames are on a new layer from frame {from}. {undo} to undo.", n, from = from, undo = undo)
+                } else {
+                    trn!("{n} video frame is on a new layer from frame {from}, with its sound on the layer below. {undo} to undo.", "{n} video frames are on a new layer from frame {from}, with their sound on the layer below. {undo} to undo.", n, from = from, undo = undo)
+                };
+                if v["truncated"] == true {
+                    said.push(' ');
+                    said.push_str(tr!("The video was longer than one import takes: the rest was left out."));
+                }
+                if let Some(note) = v["note"].as_str() {
+                    said.push(' ');
+                    said.push_str(&crate::i18n::t_dyn(note));
+                }
+                self.status_ok(said);
+            }
+            "layer.set_video" => {
+                // Another file (or the same one, back): its pictures are read afresh.
+                self.video.retry();
+                self.video_failed = None;
+                self.status_ok(if v["video"].is_null() { tr!("Removed the reference video — {undo} to undo", undo = self.undo_key()) } else { tr!("The reference video is relinked — {undo} to undo", undo = self.undo_key()) });
             }
             "file.import" => {
                 if let Some(b) = self.s.doc.bitmaps.last().filter(|b| v["bitmap"].as_u64() == Some(b.id.0)) {
@@ -3640,6 +3767,17 @@ impl App {
             crate::audio_keys::open(self, crate::audio_keys::Kind::Lips);
             return;
         }
+        // Modify › Data › Bind to Data binds the selected instance's next property to a table's
+        // column, to be changed in Properties (ADR 0118; headless, the command takes them).
+        if id == "data.bind" {
+            crate::data_ui::bind_from_menu(self);
+            return;
+        }
+        // A plain Import Data Table makes a new table (Import Again names the one to replace
+        // after asking for the file).
+        if id == "data.import_table" {
+            self.data_reimport = None;
+        }
         if id == "modify.transform_origin" {
             // The key or the menu moves to the next mode, and says which it is.
             if let Some(v) = self.run(id, json!({})) {
@@ -3677,6 +3815,10 @@ impl App {
             "file.export_audio" => Some((tr_noop!("Export audio (the movie's soundtrack as a WAV)"), "path", "soundtrack.wav".to_string())),
             "file.import_to_library" => Some((tr_noop!("Import to library (WAV, OGG or MP3 sound; PNG or JPEG image)"), "path", "sound.wav".to_string())),
             "file.import" => Some((tr_noop!("Import to stage (SVG, PNG or JPEG; WAV, OGG or MP3 onto a new layer)"), "path", "drawing.svg".to_string())),
+            // A video, read by the ffmpeg on this computer (ADR 0116); or another file for the
+            // active layer's reference video.
+            "file.import_video" => Some((tr_noop!("Import video (frames in the document, or a reference layer for tracing)"), "path", "video.mp4".to_string())),
+            "layer.set_video" => Some((tr_noop!("Relink the reference video (choose the video file)"), "path", "video.mp4".to_string())),
             "plugin.install" => Some((tr_noop!("Install plug-in (.wasm file)"), "path", "plugin.wasm".to_string())),
             // Saved commands (ADR 0097): run a file, or copy one into your commands.
             "macro.run" => Some((tr_noop!("Run a saved command (a .json file)"), "path", "command.json".to_string())),
@@ -3690,10 +3832,12 @@ impl App {
             // The document's swatches (ADR 0078): a swatch file, or a GIMP palette to import.
             "swatch.export" => Some((tr_noop!("Export swatches (a swatch file)"), "path", "swatches.json".to_string())),
             "swatch.import" => Some((tr_noop!("Import swatches (a swatch file or a GIMP palette)"), "path", "swatches.json".to_string())),
+            // A table of numbers for the Library (ADR 0118).
+            "data.import_table" => Some((tr_noop!("Import a data table (CSV, TSV or JSON)"), "path", "data.csv".to_string())),
             _ => None,
         };
         if let Some((title, key, text)) = prompt {
-            let is_file = matches!(key, "path" | "dir") && (id.starts_with("file.") || matches!(id, "plugin.install" | "macro.run" | "macro.import" | "brush.preset_export" | "brush.preset_import" | "filter.preset_export" | "filter.preset_import" | "swatch.export" | "swatch.import"));
+            let is_file = matches!(key, "path" | "dir") && (id.starts_with("file.") || matches!(id, "layer.set_video" | "plugin.install" | "macro.run" | "macro.import" | "brush.preset_export" | "brush.preset_import" | "filter.preset_export" | "filter.preset_import" | "swatch.export" | "swatch.import" | "data.import_table"));
             if is_file && platform::WEB && platform::reads_file(id) {
                 // The browser's file picker (ADR 0036). The file arrives on a later frame
                 // (`open_picked`); a save or export asks for the download's name below.
@@ -4596,6 +4740,7 @@ impl App {
         crate::desktop_ui::offer(self, &ctx);
         crate::plugins_ui::show(self, &ctx);
         crate::audio_keys::show(self, &ctx);
+        crate::data_ui::show(self, &ctx);
         crate::plugin_export_ui::show(self, &ctx);
         crate::dock_float::floating(self, &ctx);
         crate::workspaces_window::show(self, &ctx);
@@ -4603,6 +4748,7 @@ impl App {
         crate::find_panel::show(self, &ctx);
         crate::brush_panel::show(self, &ctx);
         crate::publish_panel::show(self, &ctx);
+        crate::video_import::window(self, &ctx);
         crate::test_movie::show(self, &ctx);
         crate::envelope::show(self, &ctx);
         crate::ease_editor::show(self, &ctx);
