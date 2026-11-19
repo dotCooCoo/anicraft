@@ -435,7 +435,7 @@ name = "anicraft-xml"
 version = "0.3.0"
 dependencies = [
  "craft-xfl",
- "craft-xml",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1)",
  "thiserror 2.0.21",
 ]
 
@@ -1230,7 +1230,7 @@ version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1#221efe1b01c6e2d1108204a200f0b094abdffba1"
 dependencies = [
  "craft-media",
- "craft-xml",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1)",
  "log",
  "symphonia",
  "thiserror 2.0.21",
@@ -1345,9 +1345,9 @@ source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204
 [[package]]
 name = "craft-svg"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1#221efe1b01c6e2d1108204a200f0b094abdffba1"
+source = "git+https://github.com/storytold/craft-libs?rev=010702ee9b030844c852939095b1da0d0656a890#010702ee9b030844c852939095b1da0d0656a890"
 dependencies = [
- "craft-xml",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=010702ee9b030844c852939095b1da0d0656a890)",
  "flate2",
  "kurbo",
  "quick-xml 0.41.0",
@@ -1412,8 +1412,18 @@ name = "craft-xfl"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1#221efe1b01c6e2d1108204a200f0b094abdffba1"
 dependencies = [
- "craft-xml",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1)",
  "miniz_oxide 0.8.9",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "craft-xml"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=010702ee9b030844c852939095b1da0d0656a890#010702ee9b030844c852939095b1da0d0656a890"
+dependencies = [
+ "quick-xml 0.41.0",
+ "serde",
  "thiserror 2.0.21",
 ]
 
