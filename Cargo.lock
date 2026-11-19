@@ -387,6 +387,7 @@ dependencies = [
  "craft-html",
  "craft-image-codecs",
  "craft-lottie",
+ "craft-svg",
  "rayon",
  "serde_json",
  "thiserror 2.0.21",
@@ -1218,7 +1219,7 @@ dependencies = [
 [[package]]
 name = "craft-anicraft-format"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1#221efe1b01c6e2d1108204a200f0b094abdffba1"
+source = "git+https://github.com/storytold/craft-libs?rev=08da5e1486ee640de1d2cccd8fe8dd32b1d3b62c#08da5e1486ee640de1d2cccd8fe8dd32b1d3b62c"
 dependencies = [
  "serde",
  "serde_json",
@@ -1420,7 +1421,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=b041cd8224af0d57fa62c428184a32a7d5d0f92b#b041cd8224af0d57fa62c428184a32a7d5d0f92b"
+source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1#221efe1b01c6e2d1108204a200f0b094abdffba1"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",
@@ -1430,7 +1431,7 @@ dependencies = [
 [[package]]
 name = "craft-xml"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=221efe1b01c6e2d1108204a200f0b094abdffba1#221efe1b01c6e2d1108204a200f0b094abdffba1"
+source = "git+https://github.com/storytold/craft-libs?rev=b041cd8224af0d57fa62c428184a32a7d5d0f92b#b041cd8224af0d57fa62c428184a32a7d5d0f92b"
 dependencies = [
  "quick-xml 0.41.0",
  "serde",
