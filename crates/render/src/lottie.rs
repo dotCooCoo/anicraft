@@ -822,7 +822,8 @@ fn write_keys(keys: &[Kf], enc: Enc) -> Value {
                         Out::Ease(out, inn) => (false, vec![craft_lottie::Tangents { ox: out.0, oy: out.1, ix: inn.0, iy: inn.1 }]),
                         Out::End => (false, Vec::new()),
                     };
-                    craft_lottie::KeyOut { t: k.t, s: enc.key(&k.s), hold, ease, spatial: None }
+                    // Keep the timestamp precision used before the shared writer cutover.
+                    craft_lottie::KeyOut { t: crate::lottie_keys::r3(k.t), s: enc.key(&k.s), hold, ease, spatial: None }
                 })
                 .collect();
             craft_lottie::write_prop(Value::Null, &out, None)
@@ -1303,6 +1304,26 @@ mod tests {
                 Kf { t: k["t"].as_f64().unwrap(), s: vec(&k["s"]), out }
             })
             .collect()
+    }
+
+    #[test]
+    fn shared_keys_keep_legacy_fractional_times_and_playback() {
+        let keys = vec![
+            Kf { t: 2.0, s: vec![0.0], out: Out::Ease((0.2, 0.1), (0.8, 0.9)) },
+            Kf { t: 3.2345, s: vec![10.0], out: Out::Hold },
+            Kf { t: 5.6789, s: vec![20.0], out: Out::End },
+        ];
+        let mut legacy = keys.clone();
+        for key in &mut legacy {
+            key.t = crate::lottie_keys::r3(key.t);
+        }
+        for enc in [Enc::Scalar, Enc::Vector] {
+            let written = keys_of(&write_keys(&keys, enc));
+            assert_eq!(written, legacy, "shared framing must retain the old time/value/ease policy");
+            for t in [2.0, 2.5, 3.2345, 3.235, 4.0, 5.6789, 5.679, 6.0] {
+                assert_eq!(crate::lottie_keys::value_at(&written, t), crate::lottie_keys::value_at(&legacy, t));
+            }
+        }
     }
 
     /// A square on layer 1 tweening from `a` to `b` over ten frames with `ease`.

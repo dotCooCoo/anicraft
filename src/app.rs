@@ -134,7 +134,7 @@ impl Tool {
     pub fn hint(self) -> &'static str {
         match self {
             Tool::Select => tr_noop!("Click to select, drag to move, drag on empty space to marquee-select. Shift adds to the selection."),
-            Tool::Subselect => tr_noop!("Click a shape to show its points; on a merged drawing, the points of everything connected to it. Drag points or handles to reshape (a shared point moves every shape that has it; a smooth point's handles stay in line, Alt moves one alone); drag a line or fill to move everything connected. Shift adds to the point selection, drag on empty space to marquee points, arrow keys nudge them. Double-click an edge to add a point, Delete removes points, and right-click makes a point smooth or a corner. A motion path's points edit the same way (its ends stay)."),
+            Tool::Subselect => tr_noop!("Click a shape to show its points; on a merged drawing, the points of everything connected to it. Drag points or handles to reshape (a shared point moves every shape that has it; a smooth point's handles stay in line, Alt moves one alone); drag a line or fill to move everything connected. Shift adds to the point selection, drag on empty space to marquee points, arrow keys nudge them. Double-click an edge to add a point, Delete removes points, and right-click makes a point smooth or a corner. A motion path's points edit the same way (its ends stay), and so does the path of text on a path (the text follows)."),
             Tool::Pen => tr_noop!("Click to place corner points, drag to pull smooth handles (Alt moves one handle, Shift keeps 45° steps). Click the first point to close; Enter, Esc or a double-click finishes. Click the last point to make it a corner, drag from it for a new handle, Alt-drag it to draw its curve again; Backspace removes it. On a selected path: click a point to make it a corner and again to delete it, click the outline to add a point, click an open end to continue it. Ctrl-click a path to select it. Points snap to points and lines while Snap to Objects is on."),
             Tool::Text => tr_noop!("Click to type new text, or click text to edit it. Esc or a click elsewhere finishes. The options set the font, size and colour; double-click text with the Selection tool to edit it too."),
             Tool::Pencil => tr_noop!("Drag to draw freehand. The options bar sets Smooth, Straighten or Ink."),
@@ -393,6 +393,10 @@ pub struct App {
     /// (ADR 0109).
     pub shape_dialog: Option<crate::shape_dialogs::ShapeDialog>,
     pub shape_last: crate::shape_dialogs::Last,
+    pub trace: Option<crate::trace_dialog::TraceDialog>,
+    /// Modify › Document Settings (#505): the dialog while it is open.
+    pub doc_settings: Option<crate::doc_settings::DocSettings>,
+    pub trace_last: anicraft_engine::trace::TraceSettings,
     /// Convert Audio to Keyframes and Auto Lip-Sync (ADR 0114): the dialog while it is open
     /// (its preview is a gesture it keeps open until OK or Cancel), and what it was last given.
     pub audio_keys: Option<crate::audio_keys::Dialog>,
@@ -524,6 +528,8 @@ pub struct App {
     pub dock: crate::dock::Layout,
     /// The dock's view state: a tab being dragged, where groups were drawn.
     pub dock_view: crate::dock_ui::DockView,
+    /// Window › Hide Panels (F4): the arrangement to bring back, while every panel is hidden.
+    pub hidden_panels: Option<crate::dock::Layout>,
     /// Window › Workspace › Manage Workspaces… (ADR 0087).
     pub manage_workspaces: crate::workspaces_window::Manage,
     /// The Motion Editor's view state: the property whose curve it shows, the picked key
@@ -602,6 +608,8 @@ pub struct App {
     pub prefs_to_about: bool,
     /// Installed fonts, scanned off the UI thread on first need.
     pub system_fonts: Option<std::sync::Arc<prefs::SystemFonts>>,
+    /// Faces of this computer for scripts the interface's fonts lack (#482).
+    pub font_fallback: crate::font_fallback::Fallback,
     fonts_rx: Option<std::sync::mpsc::Receiver<prefs::SystemFonts>>,
     /// Re-check which glyphs the active fonts have (after fonts change).
     glyph_check: bool,
@@ -694,6 +702,18 @@ pub const VIEW_SHORTCUTS: &[(&str, &str)] = &[
     ("F3", "view.find_next"),
     ("Shift+F3", "view.find_prev"),
     ("Alt+F3", "view.movie_explorer"),
+    // Window › each panel, open and closed from the keyboard with Animate's keys (#456), and F4
+    // for all of them at once. (Animate's Align key, Ctrl+K, is the command palette here: Align,
+    // Layer Depth and the Motion Editor take a key in the shortcut editor, `VIEW_UNBOUND`.)
+    ("Ctrl+Alt+T", "view.panel.timeline"),
+    ("Ctrl+F2", "view.panel.tools"),
+    ("Ctrl+F3", "view.panel.properties"),
+    ("Ctrl+L", "view.panel.library"),
+    ("F2", "view.panel.output"),
+    ("Ctrl+Shift+F9", "view.panel.colour"),
+    ("Ctrl+F9", "view.panel.swatches"),
+    ("Ctrl+F10", "view.panel.history"),
+    ("F4", "view.hide_panels"),
     // The open documents (ADR 0112): Close and Close All as in Animate, and the tab keys of
     // browsers (Ctrl+Tab and Ctrl+Shift+Tab work too).
     ("Ctrl+W", "view.close_document"),
@@ -705,6 +725,9 @@ pub const VIEW_SHORTCUTS: &[(&str, &str)] = &[
     ("]", "view.brush_larger"),
 ];
 
+/// View actions without a default key: they can be given one in the shortcut editor.
+pub const VIEW_UNBOUND: &[&str] = &["view.panel.align", "view.panel.layer_depth", "view.panel.motion_editor"];
+
 impl App {
     /// Show the last update's result once the native window begins drawing.
     #[cfg(not(target_arch = "wasm32"))]
@@ -715,6 +738,8 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, session: Session, shot: Option<PathBuf>) -> App {
         #[cfg_attr(not(gpu_stage), allow(unused_mut))]
         let mut app = App::with_context(&cc.egui_ctx, session, shot);
+        // Names in scripts the bundled fonts lack get a face of this computer (#482).
+        app.font_fallback.enabled = true;
         // The GPU stage shares the window's device when it runs on wgpu (ADR 0029).
         #[cfg(gpu_stage)]
         app.stage_cache.gpu.set_window_device(cc.wgpu_render_state.as_ref());
@@ -785,6 +810,9 @@ impl App {
             tl_color_open: None,
             convert_last: Default::default(),
             shape_dialog: None,
+            trace: None,
+            doc_settings: None,
+            trace_last: Default::default(),
             audio_keys: None,
             data_view: None,
             data_reimport: None,
@@ -896,6 +924,7 @@ impl App {
             desktop: None,
             prefs_to_about: false,
             system_fonts: None,
+            font_fallback: Default::default(),
             fonts_rx: None,
             glyph_check: true,
             copied: false,
@@ -915,6 +944,7 @@ impl App {
             tl_heard: None,
             tl_refocus: false,
             menu_keys: Default::default(),
+            hidden_panels: None,
             system_look: platform::SystemLook::default(),
             themes: Default::default(),
             themes_dir: None,
@@ -982,11 +1012,12 @@ impl App {
     }
 
     /// Runs an engine command, reporting failures in the status bar.
-    /// After a move, selected raw shapes merge where they land (ADR 0031).
+    /// After a move, selected raw shapes float over what they landed on, and merge with it when
+    /// they are deselected, as in Animate (ADR 0122, #487): until then they can be moved on.
     pub fn drop_raw(&mut self) {
         let raw = self.s.selected_elements().iter().any(|(_, e)| matches!(&e.kind, anicraft_engine::doc::ElementKind::Shape(sh) if sh.merge));
         if raw {
-            self.run("draw.drop", json!({}));
+            self.run("draw.float", json!({}));
         }
     }
 
@@ -1080,7 +1111,7 @@ impl App {
                 self.status_err(tr!("Font “{name}” is not installed; using the bundled font", name = name));
             }
         }
-        theme::install_fonts(ctx, ui_font.as_ref(), data_font.as_ref());
+        theme::install_fonts(ctx, ui_font.as_ref(), data_font.as_ref(), &self.font_fallback.faces);
         self.glyph_check = true;
     }
 
@@ -1787,6 +1818,44 @@ impl App {
                 }
                 self.run("element.select", json!({"ids": ids}));
             }
+            // Modify › Document Settings (#505): its dialog over the sample.
+            Some("docsettings") => crate::doc_settings::open(self),
+            Some("tracebitmap") => {
+                // Trace Bitmap (#463): a small picture (sky, sun, hills) placed twice. The left
+                // one is traced with the defaults and shows as selected raw shapes; the right
+                // one is selected with the dialog open over it.
+                self.run("layer.new", json!({"name": "Picture"}));
+                let dir = std::env::temp_dir().join("anicraft-shot-trace");
+                let _ = std::fs::create_dir_all(&dir);
+                let (w, h) = (260u32, 180u32);
+                let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+                for y in 0..h {
+                    for x in 0..w {
+                        let (fx, fy) = (x as f32, y as f32);
+                        let hill = 120.0 + 22.0 * (fx * 0.035).sin();
+                        let far = 100.0 + 16.0 * (fx * 0.05 + 1.3).cos();
+                        let c = if fy > hill {
+                            [58, 140, 84, 255]
+                        } else if fy > far {
+                            [104, 176, 120, 255]
+                        } else if (fx - 190.0).powi(2) + (fy - 52.0).powi(2) < 30.0 * 30.0 {
+                            [250, 206, 84, 255]
+                        } else {
+                            [120, 178, 232, 255]
+                        };
+                        rgba.extend_from_slice(&c);
+                    }
+                }
+                let path = dir.join("hills.png");
+                let bitmap = anicraft_engine::render::encode_png(w, h, &rgba).ok().filter(|png| std::fs::write(&path, png).is_ok()).and_then(|_| self.run("file.import_to_library", json!({"path": path.display().to_string(), "name": "hills.png"}))).and_then(|v| v["bitmap"].as_u64());
+                if let Some(b) = bitmap {
+                    self.tool = Tool::Select;
+                    self.run("library.place", json!({"bitmap": b, "x": 420, "y": 300}));
+                    self.run("modify.trace_bitmap", json!({}));
+                    self.run("library.place", json!({"bitmap": b, "x": 800, "y": 300}));
+                    crate::trace_dialog::open(self);
+                }
+            }
             Some("warp") => {
                 // Asset Warp (ADR 0079): a checkered bitmap and a striped banner, each pinned at
                 // three points and bent at frame 1, bent the other way at frame 24 (a classic
@@ -2057,6 +2126,26 @@ impl App {
                     crate::layer_props::open(self, Some(anicraft_engine::doc::LayerId(m)));
                 }
             }
+            Some("pathedit") => {
+                // Editing the path of text on a path in place, and lines on a path (ADR 0107):
+                // three lines along a wave, the Subselection tool showing the path's points
+                // with one selected (its handles out).
+                self.perform("file.new", json!({"width": 640, "height": 400}));
+                self.run("draw.rect", json!({"x": 0, "y": 0, "w": 640, "h": 400, "fill": "#f1faee", "stroke": null}));
+                self.run("layer.new", json!({"name": "Title"}));
+                // i18n-exempt: document content
+                let text = self.run("text.create", json!({"text": "Text follows its own path\nline by line, in parallel\nand the path edits in place", "x": 40, "y": 40, "size": 24, "color": "#1d3557", "align": "center", "runs": [{"chars": 25, "bold": true}, {"chars": 27, "color": "#e76f51"}, {"chars": 28, "italic": true}]})).and_then(|v| v["element"].as_u64());
+                let wave = self.run("draw.path", json!({"d": "M60 170 C200 40 300 40 330 150 C360 260 470 250 580 130", "fill": null, "stroke": "#1d3557", "stroke_width": 1})).and_then(|v| v["element"].as_u64());
+                if let (Some(t), Some(w)) = (text, wave) {
+                    self.run("element.select", json!({"ids": [t]}));
+                    self.run("text.attach_path", json!({"path": w}));
+                    self.run("element.select", json!({"ids": [w]}));
+                    self.run("edit.delete", json!({}));
+                    self.run("element.select", json!({"ids": [t]}));
+                    self.points = vec![(anicraft_engine::doc::ElementId(t), 1, anicraft_engine::geom::edit::ANCHOR)];
+                }
+                self.tool = Tool::Subselect;
+            }
             Some("richtext") => {
                 // Styled text (ADR 0085): a title with bold, coloured and superscript runs and a
                 // centred paragraph, open for typing with a word selected, its style in
@@ -2082,7 +2171,7 @@ impl App {
                     }
                 }
             }
-            Some(which @ ("textfields" | "testtext")) => {
+            Some(which @ ("textfields" | "testtext" | "htmltext" | "embedfield")) => {
                 // Dynamic and input text fields (ADR 0066): a score a script sets, a name field
                 // and a multiline notes field. `textfields` selects the name field for its
                 // Properties; `testtext` plays it in Test Movie with a name typed and Enter
@@ -2097,12 +2186,23 @@ impl App {
                 }
                 // i18n-exempt: script source, document content
                 let code = "stop();\nscore_txt.text = \"Type your name, then press Enter\";\nstage.addEventListener(KeyboardEvent.KEY_DOWN, onKey);\n\nfunction onKey(e:KeyboardEvent):void {\n\tif (e.keyCode == Keyboard.ENTER && name_txt.length > 0) {\n\t\tscore_txt.text = \"Hello, \" + name_txt.text + \"!\";\n\t}\n}\n";
+                // `htmltext` (ADR 0107): styled text from a script, a change listener that
+                // answers every keystroke, and what the viewer may type limited.
+                // i18n-exempt: script source, document content
+                let html_code = "stop();\nscore_txt.htmlText = \"Type a <b>name</b> in <font color=\\\"#e76f51\\\">letters only</font>\";\nname_txt.maxChars = 12;\nname_txt.restrict = \"A-Za-z \";\nname_txt.addEventListener(Event.CHANGE, onChange);\n\nfunction onChange(e:Event):void {\n\tscore_txt.htmlText = \"<i>Hello,</i> <b><font color=\\\"#2a9d8f\\\">\" + name_txt.text + \"</font></b> <font size=\\\"16\\\">(\" + name_txt.length + \" of \" + name_txt.maxChars + \")</font>\";\n}\n";
+                let code = if which == "htmltext" { html_code } else { code };
                 self.run("layer.new", json!({}));
                 self.run("script.set", json!({"frame": 0, "text": code, "language": "actionscript3"}));
-                if which == "textfields" {
+                if which == "textfields" || which == "embedfield" {
                     self.run("layer.select", json!({"index": 1}));
-                    if let Some(id) = self.s.visible_elements().iter().find(|e| e.name == "name_txt").map(|e| e.id.0) {
+                    let name = if which == "embedfield" { "score_txt" } else { "name_txt" };
+                    if let Some(id) = self.s.visible_elements().iter().find(|e| e.name == name).map(|e| e.id.0) {
                         self.run("element.select", json!({"ids": [id]}));
+                    }
+                    // `embedfield`: the score's digits and words travel with the HTML export.
+                    if which == "embedfield" {
+                        // i18n-exempt: document content
+                        self.run("text.field", json!({"embed": "Score: 0123456789"}));
                     }
                 } else {
                     // Floating inside the editor, so the screenshot shows it (this run only).
@@ -3327,7 +3427,7 @@ impl App {
 
     /// Any modal (prompt, confirmation, close guard) is open: global shortcuts pause.
     pub fn modal_open(&self) -> bool {
-        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
+        self.prompt.is_some() || self.convert.is_some() || self.shape_dialog.is_some() || self.trace.is_some() || self.doc_settings.is_some() || self.audio_keys.is_some() || self.confirm.is_some() || self.tabs.asking() || self.plugin_dialog.is_some() || self.templates.save.is_some() || self.video_import.is_some()
     }
 
     /// The single entry point for user-initiated commands: asks first when the engine says the
@@ -3574,7 +3674,7 @@ impl App {
                 let done = trn!("Exported {path} ({n} frame, {layers} layers).", "Exported {path} ({n} frames, {layers} layers).", v["frames"].as_u64().unwrap_or(0), path = v["written"].as_str().unwrap_or(""), layers = v["layers"]);
                 self.status_ok(format!("{done}{report}"));
             }
-            "file.export_png" | "file.export_png_sequence" | "file.export_gif" | "file.export_svg" | "file.export_video" => self.status_ok(tr!("Exported {path}", path = v.get("written").or_else(|| v.get("dir")).and_then(Value::as_str).unwrap_or(""))),
+            "file.export_png" | "file.export_png_sequence" | "file.export_svg_sequence" | "file.export_gif" | "file.export_svg" | "file.export_video" => self.status_ok(tr!("Exported {path}", path = v.get("written").or_else(|| v.get("dir")).and_then(Value::as_str).unwrap_or(""))),
             // Undo labels are the engine's English, translated when a catalog has them.
             "edit.undo" => self.status_ok(tr!("Undid {action}", action = crate::i18n::t_dyn(v["undone"].as_str().unwrap_or("")))),
             "edit.redo" => self.status_ok(tr!("Redid {action}", action = crate::i18n::t_dyn(v["redone"].as_str().unwrap_or("")))),
@@ -3757,6 +3857,17 @@ impl App {
             crate::shape_dialogs::open(self, crate::shape_dialogs::Kind::Soften);
             return;
         }
+        // Modify › Document Settings asks for the stage's size, frame rate and colour (#505;
+        // headless, the command takes them).
+        if id == "doc.set_stage" {
+            crate::doc_settings::open(self);
+            return;
+        }
+        // Modify › Bitmap › Trace Bitmap asks for Animate's four settings (#463).
+        if id == "modify.trace_bitmap" {
+            crate::trace_dialog::open(self);
+            return;
+        }
         // Convert Audio to Keyframes and Auto Lip-Sync ask what the sound drives, with a live
         // preview (ADR 0114; headless, the commands take the settings).
         if id == "sound.to_keyframes" {
@@ -3804,6 +3915,7 @@ impl App {
             "scene.rename" => Some((tr_noop!("Rename scene"), "name", self.s.doc.scenes.get(self.s.scene).map_or_else(String::new, |s| s.name.clone()))),
             "file.export_png" => Some((tr_noop!("Export frame as PNG"), "path", format!("frame_{:04}.png", self.s.frame + 1))),
             "file.export_png_sequence" => Some((tr_noop!("Export PNG sequence to folder"), "dir", "frames".to_string())),
+            "file.export_svg_sequence" => Some((tr_noop!("Export SVG sequence to folder"), "dir", "frames".to_string())),
             "file.export_gif" => Some((tr_noop!("Export animated GIF"), "path", "animation.gif".to_string())),
             "file.export_apng" => Some((tr_noop!("Export animated PNG (full colour, transparent)"), "path", "animation.png".to_string())),
             "file.export_webp" => Some((tr_noop!("Export animated WebP (lossless, transparent)"), "path", "animation.webp".to_string())),
@@ -3863,6 +3975,12 @@ impl App {
         if let Some(p) = timeline::insert_key_params(self, id) {
             self.request(id, p);
             timeline::follow_playhead(self);
+            return;
+        }
+        // Shift+F5 and Shift+F6 with no frame selection act on every layer at the playhead, as
+        // F5 does (#438).
+        if let Some(p) = timeline::remove_key_params(self, id) {
+            self.request(id, p);
             return;
         }
         // Frame commands act on the frame selection (F5 over 3 frames on 2 layers inserts 3
@@ -4225,10 +4343,14 @@ impl App {
                         self.run("timeline.goto", json!({"frame": 0}));
                     }
                 }
-                "view.actions" => self.toggle_panel(crate::dock::Panel::Actions),
+                "view.hide_panels" => self.toggle_hide_panels(),
+                id if crate::dock::Panel::from_action(id).is_some() => {
+                    if let Some(p) = crate::dock::Panel::from_action(id) {
+                        self.window_menu_panel(p);
+                    }
+                }
                 "view.find_next" => crate::find_panel::step(self, true),
                 "view.find_prev" => crate::find_panel::step(self, false),
-                "view.movie_explorer" => crate::movie_explorer::open(self),
                 "view.close_document" => crate::tabs::close_active(self),
                 "view.close_all_documents" => crate::tabs::close_all(self),
                 "view.next_document" => crate::tabs::step(self, true),
@@ -4266,7 +4388,7 @@ impl App {
         if nudge != egui::Vec2::ZERO && crate::onion::editing(self) {
             crate::onion::nudge(self, anicraft_engine::geom::Vec2::new(nudge.x, nudge.y));
         } else if nudge != egui::Vec2::ZERO && !self.s.selection.is_empty() {
-            // One undo step: the move, and raw shapes merging where they land (ADR 0031).
+            // One undo step: the move, with raw shapes left floating where they land (ADR 0122).
             let own = !self.s.in_gesture();
             if own {
                 self.s.begin_gesture(tr_noop!("Move")); // i18n-exempt: an undo label (the engine's English, translated where shown)
@@ -4731,6 +4853,8 @@ impl App {
         self.prompt_window(&ctx);
         crate::convert_symbol::window(self, &ctx);
         crate::shape_dialogs::window(self, &ctx);
+        crate::trace_dialog::window(self, &ctx);
+        crate::doc_settings::window(self, &ctx);
         crate::aids_dialog::window(self, &ctx);
         crate::templates::save_window(self, &ctx);
         crate::layer_props::window(self, &ctx);
@@ -4752,6 +4876,8 @@ impl App {
         crate::test_movie::show(self, &ctx);
         crate::envelope::show(self, &ctx);
         crate::ease_editor::show(self, &ctx);
+        // Everything is painted: text no interface font could draw gets a fallback (#482).
+        crate::font_fallback::tick(self, &ctx);
 
         // Never lose work on close: intercept it while any open document has unsaved changes,
         // and ask once for all of them (ADR 0004, ADR 0112).

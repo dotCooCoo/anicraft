@@ -1011,7 +1011,7 @@ pub fn file_dialog(cmd: &str, title: &str, default_name: &str) -> Option<PathBuf
     let (label, d) = (crate::i18n::t(label), rfd::FileDialog::new().set_title(title));
     match cmd {
         c if reads_file(c) => d.add_filter(label, exts).pick_file(),
-        "file.export_png_sequence" => d.pick_folder(),
+        "file.export_png_sequence" | "file.export_svg_sequence" => d.pick_folder(),
         _ => d.add_filter(label, exts).set_file_name(default_name).save_file(),
     }
 }
@@ -1052,7 +1052,7 @@ pub fn start_file_dialog(cmd: &str, title: &str, default_name: &str, window: &ef
         // rfd begins the sheet here, on the main thread, as AppKit needs.
         let answer: Answer = match cmd {
             c if reads_file(c) => Box::pin(d.add_filter(label, exts).pick_file()),
-            "file.export_png_sequence" => Box::pin(d.pick_folder()),
+            "file.export_png_sequence" | "file.export_svg_sequence" => Box::pin(d.pick_folder()),
             _ => Box::pin(d.add_filter(label, exts).set_file_name(default_name).save_file()),
         };
         let _ = sheet_tx.send(answer);

@@ -251,7 +251,7 @@ fn apply(s: &mut Session, prepared: Prepared) -> Result<Value> {
 /// A layer's reference video as JSON (`null` without one).
 pub(crate) fn video_json(l: &Layer) -> Value {
     match l.video.as_deref() {
-        Some(v) => json!({"path": v.path, "width": v.width, "height": v.height, "start": v.start, "offset": v.offset, "seconds": v.duration, "missing": !crate::vfs::in_memory() && !Path::new(&v.path).is_file()}),
+        Some(v) => json!({"path": v.path, "width": v.width, "height": v.height, "start": v.start, "offset": v.offset, "seconds": v.duration, "missing": !crate::vfs::in_memory() && !crate::vfs::is_file(Path::new(&v.path))}),
         None => Value::Null,
     }
 }

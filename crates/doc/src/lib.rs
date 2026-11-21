@@ -31,6 +31,7 @@ pub mod width;
 pub mod stroke_style;
 pub mod player;
 pub mod publish;
+pub mod html_text;
 pub mod rich_text;
 pub mod sample;
 pub mod templates;
@@ -56,7 +57,7 @@ pub use aids::{Aids, GUIDE_REACH, Grid, Guide, GuideAxis, MAX_GUIDES};
 pub use nine_slice::symbol_box;
 pub use rich_text::{BaselineShift, CharStyle, MAX_TEXT_RUNS, MAX_URL, ParagraphStyle, StyleSummary, TextFill, TextRun, safe_url};
 pub use armature::{Armature, Bone, BoneId, JointAngle, Limits, Pose};
-pub use eval::{DisplayItem, DisplayList, Group, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_shown, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
+pub use eval::{DisplayItem, DisplayList, Group, MAX_EVAL_ELEMENTS, MAX_SYMBOL_DEPTH, evaluate, evaluate_guided, evaluate_layer_elements, evaluate_shown, evaluate_player, evaluate_scene, evaluate_scene_camera, evaluate_timeline, evaluate_timeline_at, guide_walk, instance_start};
 pub use actions::{Action, ButtonEvent, EventHandler, FrameScript, Language, PluginScript, SourceScript};
 
 use anicraft_geom::{Affine, FillRule, Path, Rect, Vec2};
@@ -105,7 +106,7 @@ impl Rgba {
     pub fn parse_hex(s: &str) -> Option<Rgba> {
         let s = s.trim();
         let h = s.strip_prefix('#').unwrap_or(s);
-        if !h.is_ascii() || (h.len() != 6 && h.len() != 8) {
+        if !h.bytes().all(|c| c.is_ascii_hexdigit()) || (h.len() != 6 && h.len() != 8) {
             return None;
         }
         let byte = |i: usize| h.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).map(|v| v as f32 / 255.0);
@@ -1000,6 +1001,26 @@ pub struct TextField {
     /// The ActionScript 1/2 variable the field shows (kept from Animate documents, not run).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub variable: String,
+    /// What the field does when the viewer changes its text (input fields; ADR 0107): actions
+    /// run in the timeline the field is on, as an instance's event handlers are.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub on_change: Vec<actions::Action>,
+    /// The characters whose glyph outlines the HTML export carries for this field's font
+    /// (ADR 0107), so text a script sets is drawn in the author's font where the font's licence
+    /// allows; empty: the viewer's browser fonts. Each character once, at most
+    /// [`MAX_EMBED_CHARS`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub embed: String,
+}
+
+/// Most characters a field embeds.
+pub const MAX_EMBED_CHARS: usize = 1024;
+
+/// A list of characters to embed as a field keeps it: each once, in order, no control
+/// characters, at most [`MAX_EMBED_CHARS`].
+pub fn embed_chars(chars: &str) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    chars.chars().take(MAX_EMBED_CHARS * 64).filter(|c| !c.is_control() && seen.insert(*c)).take(MAX_EMBED_CHARS).collect()
 }
 
 fn black() -> Rgba {
@@ -1012,7 +1033,7 @@ fn white() -> Rgba {
 impl TextField {
     /// A single-line field of `kind`.
     pub fn new(kind: TextKind) -> TextField {
-        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new() }
+        TextField { kind, lines: LineType::Single, selectable: true, border: false, border_color: Rgba::BLACK, background: false, background_color: Rgba::WHITE, max_chars: 0, variable: String::new(), on_change: Vec::new(), embed: String::new() }
     }
 
     /// The width text wraps at in a box `box_width` wide, if its lines wrap.
@@ -1032,7 +1053,9 @@ impl TextField {
 
     /// Values in range: names cut to length, at most [`MAX_FIELD_CHARS`] typed.
     pub fn sanitized(&self) -> TextField {
-        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), ..self.clone() }
+        let mut on_change = self.on_change.clone();
+        actions::sanitize_actions(&mut on_change);
+        TextField { max_chars: self.max_chars.min(MAX_FIELD_CHARS as u32), variable: self.variable.chars().take(MAX_FIELD_NAME).collect(), on_change, embed: embed_chars(&self.embed), ..self.clone() }
     }
 }
 
@@ -1080,16 +1103,18 @@ impl Element {
     }
     /// Local-space bounds (control-point bounds for shapes, `None` for symbols).
     pub fn local_bounds(&self, doc: &Document) -> Rect {
-        element_bounds(doc, self, &Affine::IDENTITY, 0)
+        element_bounds(doc, self, &Affine::IDENTITY, 0, &std::cell::Cell::new(MAX_EVAL_ELEMENTS))
     }
     /// Bounds in the parent's space.
     pub fn bounds(&self, doc: &Document) -> Rect {
-        element_bounds(doc, self, &self.transform, 0)
+        element_bounds(doc, self, &self.transform, 0, &std::cell::Cell::new(MAX_EVAL_ELEMENTS))
     }
 }
 
-fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Rect {
-    if depth > MAX_SYMBOL_DEPTH {
+/// `work` is the query's allowance of element visits ([`MAX_EVAL_ELEMENTS`]): past it the rest
+/// adds nothing, as in evaluation.
+fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize, work: &std::cell::Cell<u32>) -> Rect {
+    if depth > MAX_SYMBOL_DEPTH || !eval::spend(work) {
         return Rect::EMPTY;
     }
     match &el.kind {
@@ -1102,7 +1127,7 @@ fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Re
         ElementKind::Group { .. } => {
             let mut r = Rect::EMPTY;
             for child in el.kind.group_members() {
-                r = r.union(&element_bounds(doc, &child, &xf.mul(&child.transform), depth + 1));
+                r = r.union(&element_bounds(doc, &child, &xf.mul(&child.transform), depth + 1, work));
             }
             r
         }
@@ -1113,7 +1138,7 @@ fn element_bounds(doc: &Document, el: &Element, xf: &Affine, depth: usize) -> Re
                 if let Some(kf) = layer.keyframes.first() {
                     for child in &kf.elements {
                         let m = xf.mul(&child.transform);
-                        r = r.union(&element_bounds(doc, child, &m, depth + 1));
+                        r = r.union(&element_bounds(doc, child, &m, depth + 1, work));
                     }
                 }
             }
@@ -1892,6 +1917,19 @@ impl Default for Stage {
 /// Largest stage edge accepted from files and commands.
 pub const MAX_STAGE_EDGE: u32 = 16_384;
 
+/// Last addressable frame (0-based); about 70 minutes at 24 fps.
+pub const MAX_FRAME: u32 = 100_000;
+
+/// Drops keyframes past [`MAX_FRAME`] and trims durations to it (files skip command checks).
+fn clamp_frames(l: &mut Layer) {
+    l.keyframes.retain(|k| k.start <= MAX_FRAME);
+    for k in &mut l.keyframes {
+        if k.end() > MAX_FRAME + 1 {
+            Arc::make_mut(k).duration = MAX_FRAME + 1 - k.start;
+        }
+    }
+}
+
 /// A scene: one part of the movie with its own main timeline. Scenes play in order.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Scene {
@@ -2167,6 +2205,7 @@ impl Document {
             }
             let tl = &mut Arc::make_mut(scene).timeline;
             for l in &mut tl.layers {
+                clamp_frames(Arc::make_mut(l));
                 Arc::make_mut(l).normalize();
                 sanitize_scripts(l);
                 sanitize_depth(l);
@@ -2207,6 +2246,7 @@ impl Document {
             }
             let tl = &mut Arc::make_mut(sym).timeline;
             for l in &mut tl.layers {
+                clamp_frames(Arc::make_mut(l));
                 Arc::make_mut(l).normalize();
                 sanitize_scripts(l);
                 // Only a scene has a camera; a symbol's camera layer is kept as a normal layer.
@@ -2432,6 +2472,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hex_with_signs_is_rejected() {
+        for bad in ["#+1+2+3", "#-1-2-3", "#12345g", "#12345+"] {
+            assert_eq!(Rgba::parse_hex(bad), None, "{bad}");
+        }
+        assert!(Rgba::parse_hex("#0a1B2c").is_some());
+        assert!(Rgba::parse_hex("#0a1B2cFF").is_some());
+    }
+
+    #[test]
     fn keyframe_lookup() {
         let mut l = Layer::new(LayerId(1), "a");
         l.keyframes = [Keyframe::new(0, 5), Keyframe::new(5, 3), Keyframe::new(10, 2)].map(Arc::new).to_vec();
@@ -2507,9 +2556,35 @@ mod tests {
         d.stage.width = 0;
         d.stage.fps = f32::NAN;
         d.next_id = 0;
+        Arc::make_mut(&mut d.timeline_mut(0).layers[0]).keyframes = [Keyframe::new(0, u32::MAX), Keyframe::new(u32::MAX - 1, 5)].map(Arc::new).to_vec();
         d.sanitize();
+        assert_eq!(d.frame_count(), MAX_FRAME + 1, "frames past the limit are dropped or trimmed");
+        let keys = &d.timeline(0).layers[0].keyframes;
+        assert_eq!(keys.len(), 1);
+        assert_eq!((keys[0].start, keys[0].duration), (0, MAX_FRAME + 1));
         assert_eq!(d.stage.width, 1);
         assert_eq!(d.stage.fps, 24.0);
         assert!(d.next_id > d.timeline(0).layers[0].id.0);
+    }
+
+    #[test]
+    fn sanitize_clamps_main_and_symbol_timelines_at_the_inclusive_limit() {
+        let cases = [
+            (vec![Keyframe::new(MAX_FRAME, 10), Keyframe::new(MAX_FRAME + 1, 1)], vec![(MAX_FRAME, 1)]),
+            (vec![Keyframe::new(0, MAX_FRAME + 1)], vec![(0, MAX_FRAME + 1)]),
+            (vec![Keyframe::new(0, u32::MAX), Keyframe::new(u32::MAX - 1, 5)], vec![(0, MAX_FRAME + 1)]),
+        ];
+        for (keys, expected) in cases {
+            let mut d = Document::default();
+            Arc::make_mut(&mut d.timeline_mut(0).layers[0]).keyframes = keys.into_iter().map(Arc::new).collect();
+            let timeline = d.timeline(0).clone();
+            d.library.push(Arc::new(Symbol { id: SymbolId(100), name: "boundary".into(), kind: SymbolKind::Graphic, linkage: None, scale_grid_kept: None, scale_grid: None, timeline }));
+            d.sanitize();
+            for timeline in [d.timeline(0), &d.library[0].timeline] {
+                let actual: Vec<_> = timeline.layers[0].keyframes.iter().map(|k| (k.start, k.duration)).collect();
+                assert_eq!(actual, expected);
+                assert_eq!(timeline.frame_count(), MAX_FRAME + 1);
+            }
+        }
     }
 }

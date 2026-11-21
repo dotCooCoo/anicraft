@@ -58,6 +58,35 @@ To show a different image in the same place, select the placed bitmap and use **
 position and transform and takes the new image's size; a shape painted with a bitmap fill keeps
 its outline and shows the new image inside it. With several bitmaps selected, they all change.
 
+### Trace Bitmap
+
+To turn a picture into shapes you can edit, select the placed bitmap and choose **Modify ›
+Bitmap › Trace Bitmap…**. Each area of colour becomes a filled shape in its place, as one undo
+step, and the shapes are selected. Pixels under half opacity stay empty.
+
+* **Colour threshold** (1 to 500, default 100): neighbouring pixels whose colours differ by less
+  than this are one colour. Raise it for fewer, larger shapes.
+* **Minimum area** (1 to 1000 pixels, default 8): smaller areas join the neighbour they share the
+  most edge with, which clears specks.
+* **Curve fit**: how closely the outlines follow the pixels, from **Pixels** (exactly along the
+  pixel edges) through **Very Tight**, **Tight**, **Normal** and **Smooth** to **Very Smooth**.
+* **Corner threshold**: **Many corners** keeps more sharp turns, **Few corners** smooths more of
+  them.
+
+The shapes are raw shapes made of lines and quadratic curves, and they fit together without gaps.
+Where raw shapes on the same layer touch them, they merge as any drawing does. A large photo at a
+low threshold makes a great many shapes; the trace stops at 20,000 and asks for a higher
+threshold or minimum area. A picture that is nearly all speckle (more than two million separate
+areas of colour) is refused the same way. A bitmap of up to 4096 × 4096 pixels can be traced; a
+large one can take a few seconds.
+
+### Convert to Bitmap
+
+**Modify › Convert to Bitmap** draws the selection, as it looks at the playhead, into a new
+bitmap in the Library (named **Bitmap 1**, **Bitmap 2**, …) and puts that bitmap where the
+selection was, on the topmost of its layers. The bitmap covers the selection's bounds on whole
+pixels, at one pixel per stage unit, up to 4096 × 4096 pixels. Undo brings the artwork back.
+
 ## Importing SVG drawings
 
 SVG files from illustration tools come in as artwork you can keep editing, not as a flat picture.

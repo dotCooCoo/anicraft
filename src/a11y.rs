@@ -671,6 +671,49 @@ mod tests {
         assert_eq!(crate::menus::access_keys(&["Fichier", "Édition", "Ändern", "日本"]), vec![Some((0, 'F')), Some((1, 'D')), Some((1, 'N')), None]);
     }
 
+    /// #455: once a menu is open, pointing at another title opens that menu; leaving the bar
+    /// keeps the open one, and with no menu open, pointing at a title opens nothing.
+    #[test]
+    fn an_open_menu_follows_the_pointer_along_the_bar() {
+        use egui::{Event, PointerButton};
+        let (_, mut app, ctx) = tree(|_, _| {});
+        let tops = app.menu_keys.top_ids().to_vec();
+        let open = |ctx: &egui::Context| -> Vec<usize> { (0..tops.len()).filter(|i| egui::Popup::is_id_open(ctx, tops[*i].with("popup"))).collect() };
+        let at = |ctx: &egui::Context, i: usize| ctx.read_response(tops[i]).map(|r| r.rect.center()).unwrap_or_else(|| panic!("menu {i} was not drawn"));
+        let events = |ctx: &egui::Context, app: &mut App, events: Vec<Event>| {
+            frame(ctx, app, egui::RawInput { events, ..input(1.0) });
+            frame(ctx, app, input(1.0));
+        };
+        let move_to = |ctx: &egui::Context, app: &mut App, to: egui::Pos2| {
+            let from = ctx.input(|i| i.pointer.hover_pos()).unwrap_or(to + egui::vec2(0.0, 300.0));
+            for step in 1..=4 {
+                events(ctx, app, vec![Event::PointerMoved(from + (to - from) * (step as f32 / 4.0))]);
+            }
+        };
+        let button = |pos: egui::Pos2, pressed: bool| Event::PointerButton { pos, button: PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        // No menu open: the pointer over the titles opens nothing.
+        let (file, edit, window) = (at(&ctx, 0), at(&ctx, 1), at(&ctx, 7));
+        move_to(&ctx, &mut app, file);
+        move_to(&ctx, &mut app, edit);
+        assert_eq!(open(&ctx), Vec::<usize>::new());
+        // Click File, then roll over Edit and Window: each opens in turn.
+        move_to(&ctx, &mut app, file);
+        events(&ctx, &mut app, vec![button(file, true)]);
+        events(&ctx, &mut app, vec![button(file, false)]);
+        assert_eq!(open(&ctx), [0], "a click opens File");
+        move_to(&ctx, &mut app, edit);
+        assert_eq!(open(&ctx), [1], "Edit opens under the pointer, and File closes");
+        assert!(!app.menu_keys.open_items(&ctx).is_empty(), "with its items");
+        move_to(&ctx, &mut app, window);
+        assert_eq!(open(&ctx), [7]);
+        // Down into the menu, or off the bar: the open menu stays.
+        move_to(&ctx, &mut app, window + egui::vec2(10.0, 60.0));
+        assert_eq!(open(&ctx), [7]);
+        // The arrow keys still move along the bar with the pointer resting where it is.
+        move_to(&ctx, &mut app, at(&ctx, 2));
+        assert_eq!(open(&ctx), [2]);
+    }
+
     #[test]
     fn the_menu_bar_works_from_the_keyboard() {
         if !crate::menus::MenuKeys::available() {

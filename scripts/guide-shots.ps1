@@ -22,6 +22,7 @@ if (-not (Test-Path $App)) { Write-Error "$App was not built" }
 # picture name, then the --open state ("-" for the window as it starts)
 $Shots = @(
   @("workspace", "-"),
+  @("document-tabs", "tabs"),
   @("start-screen", "start"),
   @("library", "library"),
   @("onion-skin", "timelinepolish"),

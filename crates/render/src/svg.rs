@@ -777,4 +777,43 @@ mod group_tests {
         let order: Vec<&str> = svg.split('<').filter_map(|t| t.split([' ', '>']).next()).filter(|t| ["path", "g", "/g"].contains(t)).collect();
         assert_eq!(order, ["path", "g", "path", "g", "path", "/g", "path", "/g", "path"], "{svg}");
     }
+
+    #[test]
+    fn links_escape_xml_attributes_and_drop_denied_schemes() {
+        let shape = DisplayItem {
+            path: Arc::new(Path::rect(0.0, 0.0, 10.0, 10.0)),
+            transform: Affine::IDENTITY,
+            fill: Some(Paint::Solid(Rgba::BLACK)),
+            stroke: None,
+            fill_rule: FillRule::NonZero,
+            color: ColorTransform::default(),
+            layer: LayerId(0),
+            element: ElementId(0),
+            outline: None,
+            clip: None,
+            masks: None,
+            guide: false,
+            group: None,
+            image: None,
+            smooth: true,
+            warp: None,
+        };
+        let stage = Stage { width: 20, height: 20, fps: 24.0, background: Rgba::WHITE };
+        let allowed = to_svg(
+            &DisplayList {
+                links: vec![(0, " \thttps://example.org/?a=1&b=\"<>'\r\n\u{7f}ok ".into())],
+                items: vec![shape.clone()],
+                ..Default::default()
+            },
+            &stage,
+        );
+        assert!(allowed.contains("<a href=\"https://example.org/?a=1&amp;b=&quot;&lt;&gt;'ok\"><path "), "{allowed}");
+        assert!(allowed.contains("</a>"), "{allowed}");
+
+        for denied in ["JavaScript:alert(1)", " java\tscript:alert(1)", "vb\rscript:msgbox(1)", "da\nta:text/html,x"] {
+            let svg = to_svg(&DisplayList { links: vec![(0, denied.into())], items: vec![shape.clone()], ..Default::default() }, &stage);
+            assert!(!svg.contains("<a "), "denied scheme {denied:?} must not emit anchor: {svg}");
+            assert!(svg.contains("<path "), "artwork remains when denied link is dropped: {svg}");
+        }
+    }
 }

@@ -273,4 +273,4 @@ Not yet. The interface is ready for translation, but it is in English only today
 
 Yes, if you want it to. `anicraft-cli mcp` lets an assistant that supports the Model Context
 Protocol draw, animate and export through AniCraft's commands. It is never on unless you set it
-up. See [Working headless](working-headless.md).
+up, and it reads and writes files only in the folders you name when you do. See [Working headless](working-headless.md).
