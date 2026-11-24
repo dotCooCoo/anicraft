@@ -415,8 +415,9 @@ fn autosave_and_recovery_cover_every_open_document() {
     let dir = std::env::temp_dir().join(format!("anicraft-tabs-recovery-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // (A minute: a deadline for a save thread on a busy machine, not a time that is checked.)
     let wait = |saver_ids: &[String]| {
-        for _ in 0..200 {
+        for _ in 0..6000 {
             if saver_ids.iter().all(|id| recovery::document_path(&dir, id).exists()) {
                 return;
             }
