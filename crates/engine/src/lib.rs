@@ -101,7 +101,7 @@ pub use anicraft_render as render;
 pub use anicraft_svg as svg;
 /// Whether a path is an Animate document (`.fla`, `.xfl`, or an XFL folder) that `file.open`
 /// imports.
-pub use cmds_file::is_animate;
+pub use cmds_file::{Import, import_package, is_animate};
 pub use cmds_modify::{Item as SelectedItem, transform_origins};
 
 #[derive(Debug, thiserror::Error)]
@@ -401,6 +401,11 @@ pub struct Session {
     pub frame: u32,
     /// Active layer.
     pub layer: LayerId,
+    /// The layers selected together in the layer list (Ctrl- and Shift-click, ADR 0131), the
+    /// active one among them. It counts only while it holds the active layer: anything that
+    /// makes another layer active (a new layer, a click, an undo) leaves the active layer as
+    /// the whole selection. Read it through [`Session::picked_layers`].
+    pub layer_sel: Vec<LayerId>,
     /// Selected elements at the playhead, each with its layer (ADR 0044).
     pub selection: Selection,
     /// Bumped on every document change, undo and redo (UI invalidation).
@@ -409,6 +414,10 @@ pub struct Session {
     pub state: StateId,
     saved_state: Option<StateId>,
     pub path: Option<PathBuf>,
+    /// The Animate file (`.fla`, `.xfl` or XFL folder) this untitled document was imported from
+    /// (ADR 0009). It names the document until it is saved, but is never written to: `path`
+    /// stays `None`, so Save asks for a new `.anicraft` name.
+    pub imported: Option<cmds_file::Import>,
     pub style: ToolStyle,
     /// Whether the rulers, grid and guides show and snap (ADR 0076): the editor's, not the
     /// document's.
@@ -578,6 +587,7 @@ impl Session {
             state,
             saved_state: Some(state),
             path: None,
+            imported: None,
             style: ToolStyle::default(),
             aids: ViewAids::default(),
             text_style: cmds_text::TextStyle::default(),
@@ -586,6 +596,7 @@ impl Session {
             dl_cache: RefCell::new(None),
             clipboard: cmds_modify::Clipboard::default(),
             frame_clipboard: cmds_frames::FrameClipboard::default(),
+            layer_sel: Vec::new(),
             ease_clipboard: None,
             motion_edit: None,
             rig_cmd: None,
@@ -1121,6 +1132,16 @@ impl Session {
         self.timeline().layers.iter().position(|l| l.id == self.layer)
     }
 
+    /// The layers selected in the layer list, top to bottom: the active layer, and those picked
+    /// with it by Ctrl- or Shift-click (ADR 0131) while they are still in this timeline.
+    pub fn picked_layers(&self) -> Vec<LayerId> {
+        if !self.layer_sel.contains(&self.layer) {
+            return vec![self.layer];
+        }
+        let here: Vec<LayerId> = self.timeline().layers.iter().map(|l| l.id).filter(|id| self.layer_sel.contains(id)).collect();
+        if here.contains(&self.layer) { here } else { vec![self.layer] }
+    }
+
     /// The current scene evaluated at the playhead, cached per `(state, scene, frame)`.
     pub fn display_list(&self) -> Arc<DisplayList> {
         let open = self.editing.last().map(|l| (l.open, l.instance, self.editing.len()));
@@ -1322,6 +1343,8 @@ impl Session {
             "scenes": self.doc.scenes.iter().map(|s| json!({"name": s.name, "frames": s.timeline.frame_count()})).collect::<Vec<_>>(),
             "movie_frames": self.doc.frame_count(),
             "layer": self.layer.0,
+            // The layers selected in the layer list, the active one among them (ADR 0131).
+            "layer_selection": self.picked_layers().iter().map(|l| l.0).collect::<Vec<_>>(),
             "selection": self.selection.id_list(),
             "selection_layers": self.selected_layers().iter().map(|l| l.0).collect::<Vec<_>>(),
             // The symbols open for editing, outermost first (ADR 0045); `layers` are the open one's.
@@ -1331,6 +1354,10 @@ impl Session {
             "sounds": sounds,
             "revision": self.revision,
             "dirty": self.is_dirty(),
+            // The Animate file an untitled document came from, and the name Save suggests for
+            // it (ADR 0009).
+            "imported": self.imported.as_ref().map(|i| i.source.display().to_string()),
+            "save_as": self.imported.as_ref().map(|i| i.save_as.display().to_string()),
             "history": {"undo": self.history.undo_len(), "redo": self.history.redo_len(), "bytes": self.history.bytes(), "evicted": self.history.evicted},
             "state": self.state,
         }))
@@ -1515,3 +1542,5 @@ mod group_tests;
 mod swatch_tests;
 #[cfg(test)]
 mod parity_tests;
+#[cfg(test)]
+mod render_budget_tests;
